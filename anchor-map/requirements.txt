@@ -1,0 +1,19 @@
+# --- 服务 / Web ---
+fastapi>=0.110
+uvicorn[standard]>=0.27
+python-multipart>=0.0.9        # FastAPI 表单(Form/File)解析
+
+# --- 数值 / 图像 ---
+numpy>=1.24
+opencv-python>=4.8
+pillow>=10.0
+
+# --- 远程模型客户端（remote 模式需要）---
+requests>=2.31
+
+# --- 本地模型（local 模式需要；remote-only 部署可不装）---
+# torch>=2.2
+# transformers>=5.0            # 提供 Sam3Model/Sam3Processor（SAM3 本地必需）
+# accelerate>=1.0
+# modelscope>=1.38            # SAM3 权重下载
+# open3d                       # 点云去噪（缺失则走 numpy 兜底）

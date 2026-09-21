@@ -1,0 +1,71 @@
+# anchor-map（Find-Anything-Like-Humans V2）
+
+由 `ElderlyCareRobot-TASK2/anchor-map-v2` 的**三节点架构**重构而来的**单进程状态机**版：
+数据源(FrameSource) + 状态机(Engine) + 锚点地图(AnchorStore) + 模型客户端(model_clients)
++ HTTP/UI(server) 全在一个进程内。
+
+## 目录
+
+```
+anchor-map/
+├── config.py            全局配置（模型 local/remote、阈值、中英词典、预定义清单）
+├── main.py              入口：装配 + 启动
+├── engine.py            ★ 状态机（MAPPING↔QUERYING/DETECTING/CONTROL）
+├── anchor_store.py      锚点地图：建/匹配/刷新/删单个/清空/落盘
+├── frame_source.py      ★ 对齐帧数据源（接口 + 占位实现，待补全采集逻辑）
+├── geometry.py          坐标变换
+├── perception.py        解码/点云/mask→3D/结果图 等纯算法工具
+├── model_clients/       RynnBrain / SAM2 / SAM3 —— 各含 local + remote 两实现
+│   ├── base.py  __init__.py(工厂)  rynnbrain.py  sam2.py  sam3.py
+├── server.py            FastAPI：控制台 + 3D 地图页 + /api/*
+├── static/index.html    控制台
+├── static/map.html      three.js 3D 地图
+└── requirements.txt
+
+../models/                本地模型权重（凡 mode=local 的模型放这）
+├── RynnBrain-8B/  sam2.1-hiera-small/  sam3/
+```
+
+## 状态机
+
+- **MAPPING（默认）**：每 tick 从 `FrameSource.latest()` 取帧 → 算相机地图系 4×4 → `AnchorStore.update`
+  （匹配则刷新，建锚脉冲置位则新建）。
+- **收到请求**：从队列取出，切到对应态处理，回填结果再切回 MAPPING（单线程，无需锁）。
+- 请求类型：`semantic_query`（遍历所有锚点）、`instant_detect`（当前帧），及建锚/删锚/清空控制。
+
+## 运行
+
+```bash
+cd anchor-map
+pip install -r requirements.txt
+# 本地跑模型还需装 requirements.txt 里注释的 torch/transformers/accelerate/modelscope/open3d
+python main.py
+```
+
+浏览器打开 **http://127.0.0.1:9200/**。
+
+> 数据源 `frame_source.py` 当前是**占位实现**（不产出数据），系统会空跑（MAPPING 空转、UI 可访问）。
+> 接真机/离线数据时，继承 `FrameSource` 实现 `latest()`（返回对齐好的 `Frame`）并在 `build_frame_source()` 里替换。
+
+## 模型 local / remote
+
+每个模型在 `config.py` 用 `mode` 决定：
+```python
+RYNNBRAIN = {"mode": "local",  "path": ".../RynnBrain-8B", "device": "auto", "batch_size": 4}
+SAM3      = {"mode": "remote", "url": "http://gpu-server:8003", "timeout": 30}
+```
+远程 HTTP 协议见 `model_clients/base.py`（JSON over POST；图 base64-JPEG、mask base64-PNG、bbox `[x1,y1,x2,y2]`）。
+
+## 主要接口
+
+| 方法 | 路径 | 说明 |
+|---|---|---|
+| GET | `/` `/map` | 控制台 / 3D 地图页 |
+| GET | `/api/status` `/api/anchors` `/api/objects` | 引擎状态 / 锚点 / 检索历史 |
+| GET | `/api/rgb` `/api/map/meta` `/api/map/image` | 当前帧 / 底图元信息 / 底图 |
+| POST | `/api/query` | semantic_query（form: object, x_min/x_max/y_min/y_max 可选）|
+| POST | `/api/detect` | instant_detect（form: object）|
+| POST | `/api/anchor/build` | 建锚脉冲 |
+| POST | `/api/anchor/{id}/delete` | 删除单个锚点 |
+| POST | `/api/anchors/clear` `/api/history/clear` | 清空锚点 / 清空历史 |
+| GET | `/api/results/{object}/{asset}` | 检索结果图 |

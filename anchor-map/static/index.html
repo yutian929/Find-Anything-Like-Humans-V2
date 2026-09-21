@@ -1,0 +1,217 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>anchor-map 控制台 · FALHV2</title>
+<style>
+  :root { --bg:#0f1420; --panel:#182233; --line:#2a3852; --fg:#e7edf5; --mut:#8ea0bd; --acc:#3d7eff; --ok:#37c871; --warn:#ff5d5d; }
+  * { box-sizing:border-box; }
+  body { margin:0; font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,"PingFang SC","Microsoft YaHei",sans-serif;
+         background:var(--bg); color:var(--fg); display:flex; height:100vh; overflow:hidden; }
+  #side { width:420px; min-width:420px; height:100%; overflow-y:auto; padding:14px; border-right:1px solid var(--line); }
+  #mapwrap { flex:1; height:100%; }
+  iframe { width:100%; height:100%; border:0; }
+  h1 { font-size:16px; margin:0 0 12px; }
+  .card { background:var(--panel); border:1px solid var(--line); border-radius:10px; padding:12px; margin-bottom:12px; }
+  .card h2 { font-size:13px; margin:0 0 10px; color:var(--mut); text-transform:uppercase; letter-spacing:.5px; }
+  button { background:var(--acc); color:#fff; border:0; border-radius:7px; padding:8px 12px; font-size:13px; cursor:pointer; }
+  button:hover { filter:brightness(1.1); }
+  button.ghost { background:transparent; border:1px solid var(--line); color:var(--fg); }
+  button.danger { background:var(--warn); }
+  button.sm { padding:4px 8px; font-size:12px; }
+  input { background:#0c111b; border:1px solid var(--line); color:var(--fg); border-radius:6px; padding:7px 9px; font-size:13px; width:100%; }
+  .row { display:flex; gap:8px; align-items:center; flex-wrap:wrap; }
+  .row > * { flex:1; }
+  .grid4 { display:grid; grid-template-columns:1fr 1fr 1fr 1fr; gap:6px; }
+  .kv { display:flex; justify-content:space-between; font-size:12px; padding:3px 0; border-bottom:1px dashed var(--line); }
+  .kv b { color:var(--mut); font-weight:500; }
+  .mut { color:var(--mut); font-size:12px; }
+  .anchor-item { display:flex; align-items:center; justify-content:space-between; gap:8px; padding:6px 8px;
+                 background:#0c111b; border:1px solid var(--line); border-radius:6px; margin-bottom:6px; font-size:12px; }
+  .pill { display:inline-block; padding:2px 8px; border-radius:20px; font-size:11px; background:#22314a; }
+  .pill.on { background:var(--ok); color:#04210f; }
+  img.result { width:100%; border-radius:8px; margin-top:8px; border:1px solid var(--line); }
+  #log { font-family:ui-monospace,monospace; font-size:11px; color:var(--mut); white-space:pre-wrap; max-height:120px; overflow:auto; }
+</style>
+</head>
+<body>
+<div id="side">
+  <h1>anchor-map 控制台</h1>
+
+  <div class="card">
+    <h2>状态</h2>
+    <div class="kv"><b>引擎状态</b><span id="st-state">-</span></div>
+    <div class="kv"><b>锚点数</b><span id="st-anchors">-</span></div>
+    <div class="kv"><b>建锚脉冲</b><span id="st-pulse" class="pill">-</span></div>
+    <div class="kv"><b>模型</b><span id="st-models">-</span></div>
+    <div class="kv"><b>数据源</b><span id="st-source">-</span></div>
+    <div class="kv"><b>上次 update</b><span id="st-update">-</span></div>
+  </div>
+
+  <div class="card">
+    <h2>锚点</h2>
+    <div class="row">
+      <button onclick="buildAnchor()">＋ 建立新锚点</button>
+      <button class="ghost" onclick="loadAnchors()">刷新列表</button>
+      <button class="danger" onclick="clearAnchors()">清空锚点</button>
+    </div>
+    <div id="anchor-list" style="margin-top:10px;"></div>
+  </div>
+
+  <div class="card">
+    <h2>语义检索 Query</h2>
+    <div class="row"><input id="q-obj" placeholder="物体名（中/英），如 瓶装矿泉水" /></div>
+    <div class="grid4" style="margin-top:8px;">
+      <input id="q-xmin" placeholder="x_min" /><input id="q-xmax" placeholder="x_max" />
+      <input id="q-ymin" placeholder="y_min" /><input id="q-ymax" placeholder="y_max" />
+    </div>
+    <div class="mut" style="margin:6px 0;">2D 范围可留空（地图系米，不限制）</div>
+    <div class="row">
+      <button onclick="runQuery()">检索</button>
+      <button class="ghost" onclick="runPredefined('full')">预定义(全部)</button>
+      <button class="ghost" onclick="runPredefined('partial')">预定义(部分)</button>
+    </div>
+    <div id="q-result"></div>
+  </div>
+
+  <div class="card">
+    <h2>即时检测 Instant Detect</h2>
+    <div class="row">
+      <input id="d-obj" placeholder="物体名" />
+      <button onclick="runDetect()">检测当前帧</button>
+    </div>
+    <div id="d-result"></div>
+  </div>
+
+  <div class="card">
+    <h2>历史</h2>
+    <div class="row"><button class="danger" onclick="clearHistory()">清空检索历史</button></div>
+    <div id="log"></div>
+  </div>
+</div>
+
+<div id="mapwrap"><iframe id="map" src="/map"></iframe></div>
+
+<script>
+const $ = (id) => document.getElementById(id);
+let mapReady = false;
+function log(msg) { const el=$('log'); el.textContent = `[${new Date().toLocaleTimeString()}] ${msg}\n` + el.textContent; }
+function postMap(msg) { const f=$('map'); if (f && f.contentWindow) f.contentWindow.postMessage(msg, '*'); }
+window.addEventListener('message', (e) => { if (e.data && e.data.type === 'mapReady') mapReady = true; });
+
+async function api(path, opts) {
+  const r = await fetch(path, Object.assign({ cache:'no-store' }, opts || {}));
+  return r.json();
+}
+function form(obj) { const fd = new FormData(); for (const k in obj) fd.append(k, obj[k]); return fd; }
+
+// ---------- 状态 ----------
+async function refreshStatus() {
+  try {
+    const s = await api('/api/status');
+    $('st-state').textContent = s.state;
+    $('st-anchors').textContent = s.num_anchors;
+    const pulse = $('st-pulse'); pulse.textContent = s.anchor_pulse ? '待建锚' : '空闲';
+    pulse.className = 'pill' + (s.anchor_pulse ? ' on' : '');
+    const m = s.models_loaded || {};
+    $('st-models').textContent = `RB:${m.rynnbrain?'✓':'×'} SAM2:${m.sam2?'✓':'×'} SAM3:${m.sam3?'✓':'×'}`;
+    const src = s.source || {};
+    $('st-source').textContent = src.connected ? '已连接' : '未就绪';
+    const u = s.last_update || {};
+    $('st-update').textContent = u.status ? `${u.status}${u.anchor_id?(' '+u.anchor_id):''}` : '-';
+  } catch (e) { /* ignore */ }
+}
+
+// ---------- 锚点 ----------
+async function buildAnchor() { await api('/api/anchor/build', { method:'POST' }); log('已置建锚脉冲，下一帧建锚'); refreshStatus(); }
+async function clearAnchors() {
+  if (!confirm('清空全部锚点？')) return;
+  const r = await api('/api/anchors/clear', { method:'POST' }); log('清空锚点: 删除 '+(r.removed_anchors||0)); loadAnchors(); postMap({type:'refresh'});
+}
+async function deleteAnchor(id) {
+  if (!confirm('删除锚点 '+id+' ？')) return;
+  const r = await api(`/api/anchor/${id}/delete`, { method:'POST' }); log('删除 '+id+': '+(r.success?'ok':'未找到')); loadAnchors(); postMap({type:'refresh'});
+}
+async function loadAnchors() {
+  const r = await api('/api/anchors');
+  const box = $('anchor-list'); box.innerHTML = '';
+  (r.anchors || []).forEach(a => {
+    const div = document.createElement('div'); div.className = 'anchor-item';
+    div.innerHTML = `<span><b>${a.id}</b> &nbsp; x=${(+a.x).toFixed(2)} y=${(+a.y).toFixed(2)} yaw=${(+a.yaw).toFixed(2)}</span>`;
+    const btns = document.createElement('span');
+    const fly = document.createElement('button'); fly.className='ghost sm'; fly.textContent='飞到';
+    fly.onclick = () => postMap({ type:'flyTo', object:{ center_3d:{ x:+a.x, y:+a.y, z:0 } } });
+    const del = document.createElement('button'); del.className='danger sm'; del.textContent='删除'; del.style.marginLeft='6px';
+    del.onclick = () => deleteAnchor(a.id);
+    btns.appendChild(fly); btns.appendChild(del); div.appendChild(btns); box.appendChild(div);
+  });
+  if (!(r.anchors||[]).length) box.innerHTML = '<div class="mut">暂无锚点</div>';
+}
+
+// ---------- 检索 ----------
+async function runQuery() {
+  const obj = $('q-obj').value.trim(); if (!obj) return;
+  log('检索: '+obj+' …');
+  const r = await api('/api/query', { method:'POST', body: form({
+    object:obj, x_min:$('q-xmin').value, x_max:$('q-xmax').value, y_min:$('q-ymin').value, y_max:$('q-ymax').value }) });
+  renderQuery(obj, r);
+}
+function renderQuery(obj, r) {
+  const box = $('q-result');
+  if (r.found) {
+    const c = r.center_3d;
+    box.innerHTML = `<div class="kv"><b>命中</b><span class="pill on">${r.anchor_id}</span></div>
+      <div class="kv"><b>center_3d</b><span>${c.x.toFixed(3)}, ${c.y.toFixed(3)}, ${c.z.toFixed(3)}</span></div>
+      <div class="kv"><b>仲裁</b><span>${r.arbitration?.decision||'-'}</span></div>`;
+    if (r.annotated_image) box.innerHTML += `<img class="result" src="data:image/jpeg;base64,${r.annotated_image}" />`;
+    postMap({ type:'setQueryTarget', name: obj });
+    postMap({ type:'flyTo', object:{ center_3d: c } });
+    log('命中 '+obj+' @ '+r.anchor_id);
+  } else {
+    box.innerHTML = `<div class="mut">未找到：${r.message||obj}</div>`;
+    log('未找到 '+obj);
+  }
+}
+async function runPredefined(scope) {
+  const r = await api('/api/predefined_objects?scope='+scope);
+  const list = r.objects || []; log(`预定义(${scope}) 共 ${list.length} 项`);
+  for (const obj of list) {
+    log('检索: '+obj+' …');
+    const res = await api('/api/query', { method:'POST', body: form({ object:obj }) });
+    log((res.found?'✓ 命中 ':'× 未找到 ')+obj);
+    if (res.found) postMap({ type:'refresh' });
+  }
+  log('预定义检索完成');
+}
+
+// ---------- 即时检测 ----------
+async function runDetect() {
+  const obj = $('d-obj').value.trim(); if (!obj) return;
+  log('检测: '+obj+' …');
+  const r = await api('/api/detect', { method:'POST', body: form({ object:obj }) });
+  const box = $('d-result');
+  if (r.found) {
+    const c = r.center_3d;
+    box.innerHTML = `<div class="kv"><b>检出</b><span>${c? (c.x.toFixed(3)+', '+c.y.toFixed(3)+', '+c.z.toFixed(3)) : '无3D'}</span></div>`;
+    postMap({ type:'showDetect', result:r });
+    log('检出 '+obj);
+  } else {
+    box.innerHTML = `<div class="mut">未检出</div>`; log('未检出 '+obj);
+  }
+  if (r.image_b64) box.innerHTML += `<img class="result" src="data:image/jpeg;base64,${r.image_b64}" />`;
+}
+
+async function clearHistory() {
+  if (!confirm('清空检索历史？')) return;
+  const r = await api('/api/history/clear', { method:'POST' }); log('清空历史: 删除 '+(r.removed_objects||0));
+  postMap({ type:'resetMarks' });
+}
+
+// ---------- 轮询 ----------
+loadAnchors(); refreshStatus();
+setInterval(refreshStatus, 1500);
+setInterval(loadAnchors, 4000);
+</script>
+</body>
+</html>

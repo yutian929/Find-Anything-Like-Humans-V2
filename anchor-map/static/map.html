@@ -1,0 +1,137 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>anchor-map 3D 地图</title>
+<style>
+  html,body { margin:0; height:100%; background:#0b0f18; overflow:hidden; }
+  #hud { position:fixed; left:10px; top:10px; z-index:5; color:#9fb2d0; font:12px ui-monospace,monospace;
+         background:rgba(16,22,34,.8); border:1px solid #2a3852; border-radius:8px; padding:8px 10px; }
+  #hud button { background:#22314a; color:#e7edf5; border:0; border-radius:5px; padding:4px 8px; font-size:12px; cursor:pointer; margin-left:6px; }
+</style>
+<script type="importmap">
+{ "imports": {
+    "three": "https://cdn.jsdelivr.net/npm/three@0.165.0/build/three.module.js",
+    "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.165.0/examples/jsm/"
+}}
+</script>
+</head>
+<body>
+<div id="hud">
+  <span id="info">anchors: 0</span>
+  <button onclick="doReset()">复位视角</button>
+</div>
+<script type="module">
+import * as THREE from 'three';
+import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+
+const scene = new THREE.Scene();
+scene.background = new THREE.Color(0x0b0f18);
+const camera = new THREE.PerspectiveCamera(55, innerWidth/innerHeight, 0.05, 500);
+camera.up.set(0, 0, 1);                       // Z-up：与地图系一致
+const HOME = new THREE.Vector3(4, -4, 5);
+camera.position.copy(HOME);
+
+const renderer = new THREE.WebGLRenderer({ antialias:true });
+renderer.setSize(innerWidth, innerHeight);
+renderer.setPixelRatio(devicePixelRatio);
+document.body.appendChild(renderer.domElement);
+
+const controls = new OrbitControls(camera, renderer.domElement);
+controls.target.set(0, 0, 0);
+
+scene.add(new THREE.AmbientLight(0xffffff, 0.9));
+const grid = new THREE.GridHelper(20, 40, 0x2a3852, 0x1a2436);
+grid.rotation.x = Math.PI/2;                  // 放到 x-y 平面
+scene.add(grid);
+scene.add(new THREE.AxesHelper(1));
+
+// 分组：锚点 / 命中标记 / 检测标记 / 底图
+const anchorGroup = new THREE.Group(); scene.add(anchorGroup);
+const markGroup = new THREE.Group(); scene.add(markGroup);
+let mapMesh = null, mapVersion = null;
+
+function clearGroup(g) { while (g.children.length) { const c = g.children.pop(); c.geometry?.dispose?.(); c.material?.dispose?.(); } }
+
+// ---------- 锚点 ----------
+async function refreshAnchors() {
+  try {
+    const r = await (await fetch('/api/anchors', { cache:'no-store' })).json();
+    clearGroup(anchorGroup);
+    const list = r.anchors || [];
+    const sphere = new THREE.SphereGeometry(0.08, 16, 16);
+    const mat = new THREE.MeshBasicMaterial({ color:0x3d7eff });
+    list.forEach(a => {
+      const x=+a.x, y=+a.y, yaw=+a.yaw;
+      const m = new THREE.Mesh(sphere, mat); m.position.set(x, y, 0); anchorGroup.add(m);
+      const dir = new THREE.Vector3(Math.cos(yaw), Math.sin(yaw), 0).multiplyScalar(0.35);
+      const geo = new THREE.BufferGeometry().setFromPoints([new THREE.Vector3(x,y,0), new THREE.Vector3(x+dir.x,y+dir.y,0)]);
+      anchorGroup.add(new THREE.Line(geo, new THREE.LineBasicMaterial({ color:0x7fa8ff })));
+    });
+    document.getElementById('info').textContent = 'anchors: ' + list.length;
+  } catch (e) {}
+}
+
+// ---------- 占据栅格底图 ----------
+async function refreshMap() {
+  try {
+    const meta = await (await fetch('/api/map/meta', { cache:'no-store' })).json();
+    if (!meta.has_map) return;
+    if (meta.version === mapVersion) return;
+    mapVersion = meta.version;
+    const tex = await new THREE.TextureLoader().loadAsync('/api/map/image?v=' + encodeURIComponent(meta.version));
+    const w = meta.width * meta.resolution, h = meta.height * meta.resolution;
+    const ox = (meta.origin?.[0]||0) + w/2, oy = (meta.origin?.[1]||0) + h/2;
+    if (mapMesh) { scene.remove(mapMesh); mapMesh.geometry.dispose(); mapMesh.material.dispose(); }
+    mapMesh = new THREE.Mesh(new THREE.PlaneGeometry(w, h), new THREE.MeshBasicMaterial({ map:tex }));
+    mapMesh.position.set(ox, oy, -0.01);
+    scene.add(mapMesh);
+  } catch (e) {}
+}
+
+// ---------- 标记 ----------
+function addMark(pos, color, r=0.12) {
+  const m = new THREE.Mesh(new THREE.SphereGeometry(r, 20, 20), new THREE.MeshBasicMaterial({ color }));
+  m.position.copy(pos); markGroup.add(m); return m;
+}
+function flyTo(p) {
+  const target = new THREE.Vector3(p.x, p.y, p.z || 0);
+  controls.target.copy(target);
+  camera.position.set(target.x + 2.5, target.y - 2.5, target.z + 3);
+}
+async function markQueryTarget(name) {
+  try {
+    const r = await (await fetch('/api/objects', { cache:'no-store' })).json();
+    const rec = (r.history || {})[name];
+    if (rec && rec.found && rec.center_3d) { addMark(new THREE.Vector3(rec.center_3d.x, rec.center_3d.y, rec.center_3d.z), 0x37c871); }
+  } catch (e) {}
+}
+
+// ---------- postMessage 控制 ----------
+window.addEventListener('message', (e) => {
+  const d = e.data || {};
+  if (d.type === 'refresh') { refreshAnchors(); refreshMap(); }
+  else if (d.type === 'setQueryTarget') { markQueryTarget(d.name); }
+  else if (d.type === 'showDetect') {
+    if (d.result && d.result.center_3d) { const c=d.result.center_3d; const m=addMark(new THREE.Vector3(c.x,c.y,c.z), 0x00e5ff); flyTo(c); }
+  }
+  else if (d.type === 'flyTo' && d.object?.center_3d) { flyTo(d.object.center_3d); }
+  else if (d.type === 'resetMarks') { clearGroup(markGroup); }
+  else if (d.type === 'resetView') { doReset(); }
+});
+window.doReset = function() { controls.target.set(0,0,0); camera.position.copy(HOME); };
+
+addEventListener('resize', () => {
+  camera.aspect = innerWidth/innerHeight; camera.updateProjectionMatrix(); renderer.setSize(innerWidth, innerHeight);
+});
+function animate() { requestAnimationFrame(animate); controls.update(); renderer.render(scene, camera); }
+animate();
+
+refreshAnchors(); refreshMap();
+setInterval(refreshAnchors, 1500);
+setInterval(refreshMap, 3000);
+parent.postMessage({ type:'mapReady' }, '*');
+</script>
+</body>
+</html>
