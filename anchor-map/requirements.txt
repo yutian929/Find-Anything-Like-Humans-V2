@@ -11,6 +11,11 @@ pillow>=10.0
 # --- 远程模型客户端（remote 模式需要）---
 requests>=2.31
 
+# --- 数据源：RealSense(ZMQ) + 底盘(REST) ---
+pyzmq>=25.0                    # 接 /home/hri/camera/realsense_publisher.py 的 ZMQ 流
+msgpack>=1.0                   # 帧 meta 解包
+# requests 见上（底盘 Slamtec REST）
+
 # --- 本地模型（local 模式需要；remote-only 部署可不装）---
 # torch>=2.2
 # transformers>=5.0            # 提供 Sam3Model/Sam3Processor（SAM3 本地必需）
