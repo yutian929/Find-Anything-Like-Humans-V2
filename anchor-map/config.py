@@ -34,21 +34,23 @@ YAW_THRESH_DEG = 10.0           # 锚点朝向匹配阈值（度）
 DEFAULT_DEPTH_SCALE = 0.001     # 深度 uint16 -> 米 的缺省尺度
 
 # ===========================================================================
-# 数据源：RealSense RGB-D（ZMQ）+ Slamtec 底盘位姿/地图（REST）
+# 数据源：已同步 RGB-D + pose（ZMQ）以及独立的 Slamtec 地图（REST）
 # ===========================================================================
-# RealSense：与 /home/hri/camera/realsense_publisher.py 约定一致（4 段 multipart）。
-FRAME_ZMQ_ENDPOINT = "ipc:///tmp/ngd_frames.ipc"
-FRAME_ZMQ_TOPIC = "ngd.frame"
-# Slamtec 底盘 REST（实测：Hermes，端口 1448）。
+# 协议见 docs/README_rgbd_pose_protocol.md：
+# [topic, msgpack metadata, RGB bytes, Depth bytes]。metadata 已包含同步后的
+# T_map_base / T_map_camera，消费端不得再单独轮询 pose 后与图像拼接。
+FRAME_ZMQ_ENDPOINT = "ipc:///tmp/rgbd_pose.ipc"
+FRAME_ZMQ_TOPIC = "rgbd.pose"
+FRAME_PROTOCOL_VERSION = 1
+
+# Slamtec 底盘 REST 仅用于一次性加载占据栅格底图；位姿不从这里读取。
 CHASSIS_URL = "http://192.168.11.1:1448"
-CHASSIS_POSE_HZ = 20.0          # 底盘位姿轮询频率
-CHASSIS_MAP_REFRESH_S = 3.0     # 占据栅格底图刷新周期（秒）
 CHASSIS_TIMEOUT_S = 2.0         # REST 请求超时（秒）
+MAP_LOAD_RETRY_S = 10.0         # 启动时地图未就绪则低频重试；首次成功后不再请求
 
 # ===========================================================================
-# 坐标变换：相机 -> 底盘 静态兜底外参（光学系->底盘；米 + 四元数 wxyz）
-# 优先使用随帧下发的动态外参 Frame.cam_tf；缺失时才回退这组静态值。
-# 四元数已含「光学系->机体系」轴变换，组装相机位姿时无需再乘 R_opt2cam。
+# 兼容/离线坐标变换工具使用的静态外参（实时主链路使用帧内 T_map_camera）
+# 光学系->底盘；米 + 四元数 wxyz。四元数已含光学系->机体系轴变换。
 # ===========================================================================
 CAM2BASE_XYZ_M = (-0.01322, 0.02376, 1.2)
 CAM2BASE_QUAT_WXYZ = (0.396687081, -0.585354046, 0.585354046, -0.396687081)

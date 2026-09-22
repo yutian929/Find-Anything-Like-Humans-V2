@@ -3,8 +3,8 @@
 > 来源仓库：`/home/hri/yutian/ElderlyCareRobot-TASK2/anchor-map-v2`
 > 目标仓库：`/home/hri/yutian/Find-Anything-Like-Humans-V2`（本仓库）
 >
-> 本文档三部分：**第一部分**是来源仓库现状分析；**第二部分**是重构说明（需求原话）；
-> **第三部分**是据此制定的重构计划与目标代码结构（供评审，确认后落地）。
+> 本文档前三部分记录来源仓库、重构需求和总体方案；末尾持续记录协议变更、
+> 实际落地范围与验收标准。
 
 ---
 ---
@@ -156,8 +156,8 @@ node1 publisher(:9100) --HTTP--> node2 relay(:9200) --HTTP--> node3 core(:9300)
 重构后合并为**一个进程**，进程内是一个**状态机 Engine**：
 
 ```
-                         ┌─────────────── FrameSource（对齐帧数据源，用户后续补全）
-                         │  直接读取 + HTTP，产出 Frame{rgb,depth,pose2d,intrinsics,cam_tf,map}
+                         ┌─────────────── FrameSource（同步帧订阅器）
+                         │  ZMQ 原子帧：Frame{rgb,depth,T_map_camera,intrinsics,stamp}
                          ▼
    ┌──────────────────────────────────────────────────────────────┐
    │                        Engine（状态机，单线程主循环）           │
@@ -176,11 +176,13 @@ node1 publisher(:9100) --HTTP--> node2 relay(:9200) --HTTP--> node3 core(:9300)
                                           │  model_clients（本地/远程）│
                                           │  RynnBrain / SAM2 / SAM3  │
                                           └──────────────────────────┘
+
+             Slamtec REST /maps/explore ──启动加载/失败低频重试──> OccupancyMap 内存缓存
 ```
 
 **状态机行为**（对应重构说明 2.1）：
 
-- **MAPPING（默认态）**：主循环每 tick 从 `FrameSource` 取最新对齐帧 → `geometry` 算相机在地图系 4×4 位姿 → `AnchorStore.update()`（按位姿阈值匹配已有锚点则刷新其快照；若「建锚脉冲」置位则新建锚点）。这就是「没事时一直跑匹配刷新」。
+- **MAPPING（默认态）**：主循环每 tick 从 `FrameSource` 取最新对齐帧，直接使用发布端随帧给出的 `T_map_camera` → `AnchorStore.update()`（按位姿阈值匹配已有锚点则刷新其快照；若「建锚脉冲」置位则新建锚点）。消费端不再另取底盘 pose 或重算相机位姿，避免图像与位姿错时。
 - **收到请求** → 主循环从请求队列取出，切到对应态处理，处理完把结果回填 `Future`，再切回 MAPPING。因为主循环单线程，模型与 AnchorStore 无并发，无需锁。
 - **两种检索请求**：
   - `semantic_query(object, xy_range?)`：**遍历所有锚点**做 RynnBrain 召回 + SAM3 仲裁 + SAM2 精分割 → 地图系 3D 中心。
@@ -197,7 +199,7 @@ Find-Anything-Like-Humans-V2/
 │   │
 │   ├── engine.py                    # ★ 状态机核心（主循环 + 请求队列 + 状态流转）
 │   ├── anchor_store.py              # 锚点地图：建/匹配/刷新/删单个/清空/落盘（原 AnchorStore）
-│   ├── frame_source.py              # ★ 对齐帧数据源：Frame 数据类 + FrameSource 接口/占位实现
+│   ├── frame_source.py              # ★ rgbd.pose 协议解码/最新帧缓存 + 地图一次性加载
 │   ├── geometry.py                  # 坐标变换（原样迁移）
 │   ├── perception.py                # 解码/点云去噪/mask→3D（原 core_models.py 的工具函数部分）
 │   │
@@ -213,38 +215,48 @@ Find-Anything-Like-Humans-V2/
 │   │   ├── index.html               # 控制台（原 index_multi.html 精简，单源、去 relay 代理）
 │   │   └── map.html                 # three.js 3D 地图（原 map_multi.html，改为同源直连 /api/*）
 │   │
-│   └── requirements.txt             # 精简依赖（去 zmq/msgpack 等数据源相关）
+│   └── requirements.txt             # Web/图像/ZMQ/msgpack/模型客户端依赖
 │
 ├── models/                          # ← 本地模型权重集中存放（凡 mode=local 的模型在此放权重）
 │   ├── RynnBrain-8B/
 │   ├── sam2.1-hiera-small/
 │   └── sam3/                        # 若 SAM3 保留且 mode=local 才需要；remote 则此处留空
 │
-└── anchor-map-refactor-plan.md      # 本文档
+└── docs/
+    ├── anchor-map-refactor-plan.md  # 本文档
+    └── README_rgbd_pose_protocol.md # 上游同步帧协议
 ```
 
 ## 三、模块职责与关键接口（改造后）
 
-### 1. `frame_source.py`（新增，★用户后续补全采集逻辑）
-统一「对齐帧」数据契约，替代原 node1 全部职责（ZMQ/回放/录制都不要了）。
+### 1. `frame_source.py`（已按 RGB-D + pose 协议落地）
+统一「同步观测」数据契约。上游发布端已经完成 RGB-D 与底盘 pose 的时间同步，
+因此 `FrameSource` 只订阅和校验 4 段 ZMQ 消息，并缓存最新有效帧。
 
 ```python
 @dataclass
 class Frame:
     rgb: np.ndarray          # BGR, HxWx3
     depth: np.ndarray        # uint16, 与 rgb 同分辨率（PNG16 无损语义）
-    pose2d: dict             # {x, y, yaw}  底盘在地图系
+    camera_pose: np.ndarray  # T_map_camera，4×4，直接来自同一条发布消息
+    base_pose: np.ndarray | None  # T_map_base，仅用于诊断/展示
     intrinsics: dict         # {fx, fy, cx, cy, depth_scale}
-    cam_tf: dict | None      # 动态相机外参(光学系→底盘)，缺失则回退 config 静态外参
     stamp: float
-    occupancy_map: OccMap | None   # 占据栅格（可选，随帧或单独）
+    frame_id: int
+    sync: dict               # 发布端时间同步诊断
 
 class FrameSource:
     def latest(self) -> Frame | None: ...     # 供 MAPPING/instant_detect 取当前帧
     def occupancy_map(self) -> OccMap | None:  # 供 UI 底图
     def healthz(self) -> dict: ...
 ```
-> 骨架 + 占位（如从固定路径读/HTTP 拉），真正采集由你补全。Engine 只依赖 `latest()`。
+协议入口固定为 `FRAME_ZMQ_ENDPOINT` / `FRAME_ZMQ_TOPIC`，默认对应
+`ipc:///tmp/rgbd_pose.ipc` / `rgbd.pose`。解码时检查协议版本、消息类型、
+`pose_valid`、图像字节长度、内参、时间戳和两个 4×4 变换；无效帧不会覆盖最新缓存。
+
+地图与 source frame 解耦：独立任务从 Slamtec REST `/maps/explore` 加载底图。启动未就绪时
+按 `MAP_LOAD_RETRY_S` 重试，首次成功后停止请求。因此稳定运行阶段地图只获取一次，
+`/api/map/*` 只读取内存缓存，不会因 UI 刷新再次请求底盘。
 
 ### 2. `engine.py`（新增，★核心）
 ```python
@@ -271,14 +283,15 @@ while self.running:
     else:
         self.state = State.MAPPING
         f = self.source.latest()
-        if f: self.store.update(f, is_new=self._take_anchor_pulse())
+        if f: self.store.update(f.rgb, f.depth, f.camera_pose, f.intrinsics,
+                                is_new=self._take_anchor_pulse())
     sleep(tick)
 ```
 
 ### 3. `anchor_store.py`（迁移 + 增强）
-原 `AnchorStore` 迁移；`update()` 入参从散列改为 `Frame`；**新增单个删除**（重构说明 2.2）：
+原 `AnchorStore` 迁移；Engine 从 `Frame` 解包后传入图像、位姿与内参；**新增单个删除**（重构说明 2.2）：
 ```python
-def update(self, frame: Frame, is_new: bool) -> dict     # 建/匹配刷新
+def update(self, rgb, depth, camera_pose, intrinsics, is_new: bool) -> dict
 def find_match(self, camera_pose) -> anchor | None
 def delete(self, anchor_id: str) -> dict                 # ★ 新增：删除指定锚点
 def clear(self) -> dict                                  # 清空全部
@@ -322,7 +335,7 @@ class RynnBrainBase(ABC):
 
 `static/` 由原 2 个 html 精简迁移：数据源从 relay `:9200/api/*` 改为同源 `/api/*`；地图页保留占据栅格底图 + 锚点 + 命中物体 + 即时检测点 + 机器人实时位姿，周期自动刷新；控制台保留建锚/删锚(可选单个)/清空/Query/预定义检索/即时检测。去掉录制卡片、全类别检索卡片。
 
-### 8. 远程模型 HTTP 协议 v1（本文档约定）
+### 7. 远程模型 HTTP 协议 v1（本文档约定）
 
 本地类与远程类实现**同一套** `base.py` 抽象方法；远程类把调用序列化为下面的端点。约定：
 
@@ -352,7 +365,7 @@ POST /detect        {"images_b64":[...], "prompt":"water bottle",
                                                    "mask_b64":"<PNG>"}]}, ...]}
 ```
 
-### 7. `config.py`（保留 + 调整，重构说明 2.3）
+### 8. `config.py`（保留 + 调整，重构说明 2.3）
 - 保留：阈值（`XY_THRESH`/`YAW_THRESH_DEG`）、SAM3 仲裁参数（`SAM3_DEFAULT_THRESHOLD`/`SAM3_DEFAULT_MASK_THRESHOLD`/`QUERY_SAM3_OVERLAP_THRESH`/`QUERY_SAM3_SCORE_THRESH`/`SAM3_BATCH_SIZE`）、预定义清单 `PREDEFINED_QUERY_OBJECTS_*`、静态相机外参、`MAP_ROOT` 等落盘路径。
 - **新增 `OBJECT_PROMPTS`**（原 `objects_list.json` 的 `categories`）：中文名 → 英文 prompt 词典，供 semantic_query 把中文物体名转成 SAM3 prompt 查表。因体量小且纯静态，直接进 config.py：
 ```python
@@ -366,7 +379,8 @@ SAM2      = {"mode": "local",  "path": MODELS_DIR/"sam2.1-hiera-small"}
 SAM3      = {"mode": "local",  "path": MODELS_DIR/"sam3", "device": "auto"}   # 若保留 SAM3
 # 任一模型都可改远程，例如： RYNNBRAIN = {"mode": "remote", "url": "http://gpu-server:8001", "timeout": 30}
 ```
-- 去掉：节点1 ZMQ/回放/录制、relay 上游 URL（`PUBLISHER_URL`/`CORE_URL`）、`UPDATE_HZ`（改为 Engine tick）等跨进程配置；全类别相关 `MULTI_INSTANCE_*` / `MULTI_INSTANCE_OBJECTS_JSON`。
+- 数据源配置改为新协议的 `FRAME_ZMQ_ENDPOINT`、`FRAME_ZMQ_TOPIC`、`FRAME_PROTOCOL_VERSION`；地图只保留 `CHASSIS_URL`、REST 超时和首次加载重试间隔。删除消费端 pose 轮询频率和周期地图刷新配置。
+- 去掉：旧 node1/relay 上游 URL（`PUBLISHER_URL`/`CORE_URL`）、`UPDATE_HZ`（改为 Engine tick）等跨进程配置；全类别相关 `MULTI_INSTANCE_*` / `MULTI_INSTANCE_OBJECTS_JSON`。
 - **不再有 `objects_list.json` 与 `new_queries` 运行时翻译缓存**：semantic_query 遇到 `OBJECT_PROMPTS` 里没有的中文名时，即时用 RynnBrain 翻译一次（无落盘状态，代码最简）。
 
 ## 四、删减清单（明确不迁移）
@@ -374,7 +388,7 @@ SAM3      = {"mode": "local",  "path": MODELS_DIR/"sam3", "device": "auto"}   # 
 | 原文件/功能 | 处理 |
 |---|---|
 | `node1_publisher_stream.py` / `node1_publisher_offline.py` | **删**，职责并入 `frame_source.py` |
-| `scripts/robot_stream_publisher.py`、ZMQ/msgpack 流、录制+回放 | **删**（数据源改直接读+HTTP） |
+| 旧 `ngd.frame` 图像流、消费端 REST pose 拼接、录制+回放 | **删**；替换为上游已同步的 `rgbd.pose` ZMQ/msgpack 协议 |
 | `node2_relay.py` 的进程分离、`_subscriber_loop`/`_uploader_loop`、`/api/*` 代理 + URL 重写 | **删/内联**进 Engine + server |
 | `seq_loader.py`（遗留未用）、`scripts/tmp_*.py`（延迟探测） | **删** |
 | **全类别多实例检索** `multi_query/all`、`results_multi/`、SAM3 `segment_categories`、`merge_instances_3d` | **删**（只保留 semantic_query + instant_detect 两接口） |
@@ -387,7 +401,7 @@ SAM3      = {"mode": "local",  "path": MODELS_DIR/"sam3", "device": "auto"}   # 
 | 原 | 新 |
 |---|---|
 | `config.py` | `config.py`（模型路径改配置块、去跨进程项） |
-| `geometry.py` | `geometry.py`（原样） |
+| `geometry.py` | 保留为通用/兼容工具；实时主链路直接采用协议的 `T_map_camera`，不再调用它重算位姿 |
 | `core_models.py` 工具函数 | `perception.py` |
 | `core_models.py` 的 `AnchorStore` | `anchor_store.py`（+ 单删） |
 | `core_models.py` 的 3 个模型类 | `model_clients/{rynnbrain,sam2,sam3}.py`（+ 远程模式；SAM3 只留 detect） |
@@ -396,12 +410,12 @@ SAM3      = {"mode": "local",  "path": MODELS_DIR/"sam3", "device": "auto"}   # 
 | `index_multi.html` / `map_multi.html` | `static/index.html` / `static/map.html` |
 | `objects_list.json` 的 categories | 收进 `config.py` 的 `OBJECT_PROMPTS`（new_queries 缓存删除） |
 
-## 六、落地顺序（确认结构后执行）
+## 六、落地顺序
 
 1. 建目录 `anchor-map/`、`models/`。
 2. 迁移 `config.py`（改模型配置块 + 新增 `OBJECT_PROMPTS`、去跨进程与全类别项）、`geometry.py`。
 3. 拆 `core_models.py` → `perception.py` + `anchor_store.py`(+单删) + `model_clients/*`(+远程；SAM3 只留 detect)。
-4. 写 `frame_source.py`（Frame + 接口 + 占位实现）。
+4. 写 `frame_source.py`（协议解码 + 最新同步帧缓存 + 一次性地图加载）。
 5. 写 `engine.py`（状态机主循环 + semantic_query/instant_detect + 控制类）。
 6. 写 `server.py` + 精简 `static/`（同源、去录制/全类别卡片）。
 7. 写 `main.py`、`requirements.txt`、`README.md`，最小跑通（用占位 FrameSource）。
@@ -410,4 +424,34 @@ SAM3      = {"mode": "local",  "path": MODELS_DIR/"sam3", "device": "auto"}   # 
 
 1. **命名**：目录/文件命名（`model_clients/`、`perception.py` 等）保持不变。 ✅
 2. **全类别多实例检索**：删除，只做 `semantic_query` 与 `instant_detect` 两个接口；SAM3 仅作 semantic_query 的仲裁检测器保留。 ✅
-3. **远程模型 HTTP 协议**：采用本文档「三·8 远程模型 HTTP 协议 v1」。 ✅
+3. **远程模型 HTTP 协议**：采用本文档「三·7 远程模型 HTTP 协议 v1」。 ✅
+
+## 八、source frame 协议变更与验收项（2026-09-22）
+
+### 变更结论
+
+1. source frame 采用 `docs/README_rgbd_pose_protocol.md` 的协议 v1：
+   `[topic, msgpack metadata, RGB bytes, Depth bytes]`。
+2. `T_map_camera` 与图像在同一消息中，作为唯一的实时相机全局位姿来源；
+   `T_map_base` 仅保留作诊断。旧的“ZMQ 图像 + REST 最新 pose”拼接链路删除。
+3. `timestamp_ns` 作为观测时间；不再把 RealSense 硬件相对时间误当 Unix 时间。
+4. Occupancy map 独立于 frame 流。默认只需成功获取一次：启动失败可以低频重试，
+   首次成功后停止访问底盘并缓存结果。
+
+### 代码改动范围
+
+| 文件 | 改动 |
+|---|---|
+| `anchor-map/config.py` | 切换 endpoint/topic；新增协议版本和地图首次加载重试；删除 pose 高频轮询/地图周期刷新配置 |
+| `anchor-map/frame_source.py` | 严格解码协议 v1；缓存 `T_map_camera` 原子帧；地图改为独立的一次性加载；health 不再触发同步 HTTP |
+| `anchor-map/engine.py` | mapping 与 instant detect 直接使用 `frame.camera_pose` |
+| `anchor-map/main.py` | 服务退出时停止 Engine 和数据源后台任务 |
+| `anchor-map/README.md` | 更新真实数据源和地图生命周期说明 |
+
+### 验收标准
+
+- 合法协议帧可还原 BGR、uint16 Depth、内参、Unix 时间戳和两个 4×4 位姿。
+- `pose_valid=false`、版本/类型不符、尺寸或矩阵非法的消息被拒绝，且不覆盖上一帧。
+- Engine 的锚点刷新和 instant detect 使用消息内 `T_map_camera`，代码路径中没有 REST pose 拼接。
+- 底图首次成功后 `map_load_attempts` 不再增长；UI 多次请求 `/api/map/meta`、`/api/map/image` 不访问底盘。
+- `/api/status` 只读内存状态，能看到 `frame_id`、帧龄、拒绝帧计数、地图加载次数和最近错误。

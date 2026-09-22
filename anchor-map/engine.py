@@ -1,7 +1,7 @@
 """状态机 Engine —— 合并原三节点的运行时职责。
 
 单线程主循环：
-- MAPPING（默认/空闲）：从 FrameSource 取最新对齐帧 -> 算相机地图系 4x4 -> AnchorStore.update
+- MAPPING（默认/空闲）：从 FrameSource 取最新同步帧 -> 直接使用 T_map_camera -> AnchorStore.update
   （匹配则刷新，建锚脉冲置位则新建）。这就是「没事时一直跑匹配刷新」。
 - 收到请求：从队列取出，切到对应态处理，把结果回填 Future，再切回 MAPPING。
   因为只有主循环这一个线程碰模型与 AnchorStore，无需加锁。
@@ -29,7 +29,6 @@ import cv2
 import numpy as np
 
 import config
-import geometry
 import perception as P
 from anchor_store import AnchorStore
 from frame_source import FrameSource
@@ -196,7 +195,7 @@ class Engine:
             bgr = frame.rgb
             depth = frame.depth
             h, w = bgr.shape[:2]
-            camera_pose = geometry.camera_pose_in_map(frame.pose2d, frame.cam_tf)
+            camera_pose = frame.camera_pose
             intr = P.normalize_intrinsics(frame.intrinsics, w, h)
             is_new = self._anchor_pulse
             self._anchor_pulse = False
@@ -398,7 +397,7 @@ class Engine:
         from PIL import Image
         image = Image.fromarray(rgb)
         w, h = image.size
-        pose_mat = geometry.camera_pose_in_map(frame.pose2d, frame.cam_tf)
+        pose_mat = frame.camera_pose
         intr = P.normalize_intrinsics(frame.intrinsics, w, h)
 
         bbox_norm = rynnbrain.detect_one(image, object_name)

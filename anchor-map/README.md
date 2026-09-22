@@ -12,7 +12,7 @@ anchor-map/
 ├── main.py              入口：装配 + 启动
 ├── engine.py            ★ 状态机（MAPPING↔QUERYING/DETECTING/CONTROL）
 ├── anchor_store.py      锚点地图：建/匹配/刷新/删单个/清空/落盘
-├── frame_source.py      ★ 对齐帧数据源（接口 + 占位实现，待补全采集逻辑）
+├── frame_source.py      ★ rgbd.pose 解码/最新同步帧缓存 + 地图一次性加载
 ├── geometry.py          坐标变换
 ├── perception.py        解码/点云/mask→3D/结果图 等纯算法工具
 ├── model_clients/       RynnBrain / SAM2 / SAM3 —— 各含 local + remote 两实现
@@ -28,7 +28,7 @@ anchor-map/
 
 ## 状态机
 
-- **MAPPING（默认）**：每 tick 从 `FrameSource.latest()` 取帧 → 算相机地图系 4×4 → `AnchorStore.update`
+- **MAPPING（默认）**：每 tick 从 `FrameSource.latest()` 取同步帧 → 直接使用帧内 `T_map_camera` → `AnchorStore.update`
   （匹配则刷新，建锚脉冲置位则新建）。
 - **收到请求**：从队列取出，切到对应态处理，回填结果再切回 MAPPING（单线程，无需锁）。
 - 请求类型：`semantic_query`（遍历所有锚点）、`instant_detect`（当前帧），及建锚/删锚/清空控制。
@@ -44,8 +44,12 @@ python main.py
 
 浏览器打开 **http://127.0.0.1:9200/**。
 
-> 数据源 `frame_source.py` 当前是**占位实现**（不产出数据），系统会空跑（MAPPING 空转、UI 可访问）。
-> 接真机/离线数据时，继承 `FrameSource` 实现 `latest()`（返回对齐好的 `Frame`）并在 `build_frame_source()` 里替换。
+`frame_source.py` 按 `docs/README_rgbd_pose_protocol.md` 订阅
+`ipc:///tmp/rgbd_pose.ipc` / `rgbd.pose`。发布端在一条消息中提供 RGB、Depth、
+`T_map_base` 和 `T_map_camera`，本进程直接消费同步后的 `T_map_camera`，不再单独轮询底盘 pose。
+
+占据栅格由独立后台任务从 Slamtec `/maps/explore` 获取。启动时失败会按
+`MAP_LOAD_RETRY_S` 低频重试，首次成功后缓存到内存并停止请求；UI 的 map 接口只读该缓存。
 
 ## 模型 local / remote
 
