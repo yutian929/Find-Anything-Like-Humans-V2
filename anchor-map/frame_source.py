@@ -166,12 +166,14 @@ class ChassisMapClient:
     def __init__(self, base_url: str, timeout: float = 2.0):
         import requests
 
-        self._requests = requests
+        self._session = requests.Session()
+        # 底盘是局域网直连设备，不能继承 HTTP_PROXY/HTTPS_PROXY。
+        self._session.trust_env = False
         self.base = str(base_url).rstrip("/")
         self.timeout = float(timeout)
 
     def explore_map(self) -> OccupancyMap:
-        response = self._requests.get(
+        response = self._session.get(
             f"{self.base}/api/core/slam/v1/maps/explore", timeout=self.timeout
         )
         response.raise_for_status()
