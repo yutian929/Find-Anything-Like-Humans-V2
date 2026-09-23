@@ -41,7 +41,7 @@ DEFAULT_DEPTH_SCALE = 0.001     # 深度 uint16 -> 米 的缺省尺度
 # T_map_base / T_map_camera，消费端不得再单独轮询 pose 后与图像拼接。
 FRAME_ZMQ_ENDPOINT = "ipc:///tmp/rgbd_pose.ipc"
 FRAME_ZMQ_TOPIC = "rgbd.pose"
-FRAME_PROTOCOL_VERSION = 1
+FRAME_PROTOCOL_VERSION = 2
 
 # Slamtec 底盘 REST 仅用于一次性加载占据栅格底图；位姿不从这里读取。
 CHASSIS_URL = "http://192.168.11.1:1448"

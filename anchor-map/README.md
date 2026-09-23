@@ -47,6 +47,7 @@ python main.py
 `frame_source.py` 按 `docs/README_rgbd_pose_protocol.md` 订阅
 `ipc:///tmp/rgbd_pose.ipc` / `rgbd.pose`。发布端在一条消息中提供 RGB、Depth、
 `T_map_base` 和 `T_map_camera`，本进程直接消费同步后的 `T_map_camera`，不再单独轮询底盘 pose。
+使用当前发布端的协议 v2；深度图须对齐到彩色光学系。
 
 占据栅格由独立后台任务从 Slamtec `/maps/explore` 获取。启动时失败会按
 `MAP_LOAD_RETRY_S` 低频重试，首次成功后缓存到内存并停止请求；UI 的 map 接口只读该缓存。

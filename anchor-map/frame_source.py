@@ -91,7 +91,7 @@ def _matrix4(value: Any, field_name: str) -> np.ndarray:
 
 
 def decode_rgbd_pose_message(parts: Sequence[bytes]) -> Frame:
-    """校验并解码一条协议 v1 multipart 消息，便于独立测试协议适配。"""
+    """校验并解码当前发布端的协议 v2 multipart 消息。"""
     import msgpack
 
     if len(parts) != 4:
@@ -104,7 +104,7 @@ def decode_rgbd_pose_message(parts: Sequence[bytes]) -> Frame:
     meta = msgpack.unpackb(meta_b, raw=False)
     if not isinstance(meta, dict):
         raise ValueError("metadata 必须是 map")
-    if int(meta.get("version", -1)) != int(config.FRAME_PROTOCOL_VERSION):
+    if meta.get("version") != config.FRAME_PROTOCOL_VERSION:
         raise ValueError(f"不支持的协议版本：{meta.get('version')!r}")
     if meta.get("type") != "rgbd_pose":
         raise ValueError(f"不支持的消息类型：{meta.get('type')!r}")
@@ -115,6 +115,17 @@ def decode_rgbd_pose_message(parts: Sequence[bytes]) -> Frame:
     height, width = int(meta["height"]), int(meta["width"])
     if height <= 0 or width <= 0:
         raise ValueError(f"非法图像尺寸：{width}x{height}")
+    # T_map_camera 和 color_intr 都属于彩色光学系；深度必须对齐到该系。
+    if (
+        meta.get("rgb_encoding") != "rgb8"
+        or meta.get("depth_encoding") != "z16"
+        or meta.get("depth_aligned_to") != "color"
+        or meta.get("T_map_camera_frame") != "color_optical"
+        or meta.get("depth_frame") != "color_optical"
+        or int(meta.get("depth_width", -1)) != width
+        or int(meta.get("depth_height", -1)) != height
+    ):
+        raise ValueError("帧编码、深度对齐或相机坐标系与 anchor-map 不兼容")
     rgb_dtype = np.dtype(meta.get("rgb_dtype", "uint8"))
     depth_dtype = np.dtype(meta.get("depth_dtype", "uint16"))
     if rgb_dtype != np.dtype("uint8") or depth_dtype != np.dtype("uint16"):

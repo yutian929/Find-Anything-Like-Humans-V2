@@ -242,7 +242,7 @@ meta = msgpack.unpackb(meta_bytes, raw=False)
 当前协议版本：
 
 ```text
-version = 1
+version = 2
 type = "rgbd_pose"
 ```
 
@@ -252,15 +252,19 @@ type = "rgbd_pose"
 
 | 字段 | 类型 | 说明 |
 |---|---|---|
-| `version` | int | 协议版本，目前为 `1` |
+| `version` | int | 协议版本，目前为 `2` |
 | `type` | string | 数据类型，目前固定为 `rgbd_pose` |
 | `frame_id` | int | 发布帧序号 |
 | `timestamp_ns` | int | 当前观测主时间戳，Unix ns |
 | `timestamp_source` | string | 时间戳来源 |
 | `width` | int | RGB/对齐后深度图宽度 |
 | `height` | int | RGB/对齐后深度图高度 |
+| `depth_width` / `depth_height` | int | 发布的深度图尺寸 |
 | `rgb_dtype` | string | RGB 数组数据类型，通常 `uint8` |
 | `depth_dtype` | string | 深度数组数据类型，通常 `uint16` |
+| `rgb_encoding` / `depth_encoding` | string | 当前为 `rgb8` / `z16` |
+| `depth_aligned_to` | string / null | 深度对齐目标；当前为 `color` |
+| `T_map_camera_frame` / `depth_frame` | string | 当前均为 `color_optical` |
 | `depth_scale_m` | float | 深度 raw value 到米的比例 |
 | `pose_valid` | bool | 当前帧是否存在有效同步位姿 |
 | `T_map_base` | 4×4 list / null | 底盘在 map 坐标系下的位姿 |
@@ -1624,7 +1628,7 @@ ZMQ PUB/SUB 是实时广播模型。
 后续如果继续扩展该协议，建议：
 
 ```text
-version = 1
+version = 2
 ```
 
 保持版本字段。
@@ -1643,7 +1647,7 @@ version = 1
 如果出现不兼容修改，再升级：
 
 ```text
-version = 2
+version = 3
 ```
 
 接收端建议至少检查：
