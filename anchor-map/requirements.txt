@@ -18,7 +18,7 @@ msgpack>=1.0                   # 帧 meta 解包
 
 # --- 本地模型（local 模式需要；remote-only 部署可不装）---
 # torch>=2.2
-# transformers>=5.0            # 提供 Sam3Model/Sam3Processor（SAM3 本地必需）
+# transformers==5.8.0           # 提供 Sam3Model/Sam3Processor；见 requirements-local.txt
 # accelerate>=1.0
 # modelscope>=1.38            # SAM3 权重下载
 # open3d                       # 点云去噪（缺失则走 numpy 兜底）

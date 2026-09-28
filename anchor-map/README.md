@@ -23,7 +23,7 @@ anchor-map/
 └── requirements.txt
 
 ../models/                本地模型权重（凡 mode=local 的模型放这）
-├── RynnBrain-8B/  sam2.1-hiera-small/  sam3/
+├── RynnBrain-2B/  sam2.1-hiera-small/  sam3/
 ```
 
 ## 状态机
@@ -37,10 +37,21 @@ anchor-map/
 
 ```bash
 cd anchor-map
-pip install -r requirements.txt
-# 本地跑模型还需装 requirements.txt 里注释的 torch/transformers/accelerate/modelscope/open3d
+pip install -r requirements-local.txt  # 当前 config.py 的三个模型都使用本地模式
 python main.py
 ```
+
+仅使用远程模型时可改装 `requirements.txt`。本地 SAM3 需要
+`transformers==5.8.0`；已安装旧版 `transformers` 的环境需升级后重启
+`python main.py`。`open3d` 可选，缺失时点云处理会使用 numpy 兜底。
+
+本地模型权重放在项目根目录 `models/`。运行
+`../download_models.sh` 可下载配置所需的 RynnBrain-2B、SAM2.1 和 SAM3；
+也可用 `../download_models.sh rynnbrain|sam2|sam3` 单独下载或续传。
+默认下载 2B（约 4.9 GB）；如需 8B，可运行 `RYNNBRAIN_SIZE=8B ../download_models.sh rynnbrain`，
+并将 `config.py` 的 `RYNNBRAIN["path"]` 指向 `models/RynnBrain-8B`。
+RynnBrain 和 SAM2.1 使用 Hugging Face 的 `hf` 命令下载；SAM3 使用 ModelScope
+的 `modelscope` 命令下载。脚本会验证配置文件和 safetensors 权重是否到位。
 
 浏览器打开 **http://127.0.0.1:9200/**。
 
@@ -56,7 +67,7 @@ python main.py
 
 每个模型在 `config.py` 用 `mode` 决定：
 ```python
-RYNNBRAIN = {"mode": "local",  "path": ".../RynnBrain-8B", "device": "auto", "batch_size": 4}
+RYNNBRAIN = {"mode": "local",  "path": ".../RynnBrain-2B", "device": "auto", "batch_size": 4}
 SAM3      = {"mode": "remote", "url": "http://gpu-server:8003", "timeout": 30}
 ```
 远程 HTTP 协议见 `model_clients/base.py`（JSON over POST；图 base64-JPEG、mask base64-PNG、bbox `[x1,y1,x2,y2]`）。

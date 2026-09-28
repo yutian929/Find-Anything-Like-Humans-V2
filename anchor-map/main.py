@@ -38,7 +38,7 @@ def main() -> None:
     app = create_app(engine)
     logger.info("anchor-map 就绪：http://%s:%d/", config.HOST, config.PORT)
     try:
-        uvicorn.run(app, host=config.HOST, port=config.PORT, log_level="info")
+        uvicorn.run(app, host=config.HOST, port=config.PORT, log_level="info", access_log=False)
     finally:
         engine.stop()
         close = getattr(source, "close", None)

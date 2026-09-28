@@ -62,7 +62,7 @@ CAM2BASE_QUAT_WXYZ = (0.396687081, -0.585354046, 0.585354046, -0.396687081)
 # remote：连 url 端口，协议见 model_clients/base.py（JSON over HTTP）。
 RYNNBRAIN = {
     "mode": "local",
-    "path": str(MODELS_DIR / "RynnBrain-8B"),
+    "path": str(MODELS_DIR / "RynnBrain-2B"),
     "device": "auto",
     "batch_size": 4,            # 召回阶段批量前向的批大小；<=0 表示一次跑完全部候选
 }

@@ -19,6 +19,11 @@ from engine import Engine
 logger = logging.getLogger("server")
 
 
+def _command(path: str, params: dict, action):
+    logger.info("HTTP POST %s params=%s", path, params)
+    return action()
+
+
 def create_app(engine: Engine) -> FastAPI:
     app = FastAPI(title="Find-Anything-Like-Humans V2 · anchor-map")
     static_dir = Path(config.STATIC_DIR)
@@ -93,27 +98,30 @@ def create_app(engine: Engine) -> FastAPI:
         y_min: str = Form(""), y_max: str = Form(""),
     ):
         xy = {"x_min": x_min, "x_max": x_max, "y_min": y_min, "y_max": y_max}
-        return engine.semantic_query(object, xy)
+        return _command("/api/query", {"object": object, **xy},
+                        lambda: engine.semantic_query(object, xy))
 
     @app.post("/api/detect")
     def api_detect(object: str = Form(...)):
-        return engine.instant_detect(object)
+        return _command("/api/detect", {"object": object},
+                        lambda: engine.instant_detect(object))
 
     # ---------------- 锚点控制 ---------------- #
     @app.post("/api/anchor/build")
     def api_anchor_build():
-        return engine.build_anchor()
+        return _command("/api/anchor/build", {}, engine.build_anchor)
 
     @app.post("/api/anchor/{anchor_id}/delete")
     def api_anchor_delete(anchor_id: str):
-        return engine.delete_anchor(anchor_id)
+        return _command(f"/api/anchor/{anchor_id}/delete", {"anchor_id": anchor_id},
+                        lambda: engine.delete_anchor(anchor_id))
 
     @app.post("/api/anchors/clear")
     def api_anchors_clear():
-        return engine.clear_anchors()
+        return _command("/api/anchors/clear", {}, engine.clear_anchors)
 
     @app.post("/api/history/clear")
     def api_history_clear():
-        return engine.clear_history()
+        return _command("/api/history/clear", {}, engine.clear_history)
 
     return app

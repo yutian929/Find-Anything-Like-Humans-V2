@@ -59,6 +59,17 @@ def _has_chinese(text: str) -> bool:
     return bool(re.search(r"[一-鿿]", str(text)))
 
 
+def _result_summary(result: Any) -> Dict[str, Any]:
+    """保留指令结果的关键信息，避免将图片 base64 或大量候选写入日志。"""
+    if not isinstance(result, dict):
+        return {"result": str(result)}
+    keys = (
+        "success", "found", "object", "anchor_id", "status", "bbox", "center_3d",
+        "removed", "removed_anchors", "removed_objects", "message", "error",
+    )
+    return {key: result[key] for key in keys if key in result}
+
+
 class Engine:
     def __init__(self, source: FrameSource, store: AnchorStore):
         self.source = source
@@ -104,6 +115,7 @@ class Engine:
 
     def _run(self) -> None:
         logger.info("engine loop started (tick=%.2fs)", self._tick)
+        logger.info("state %s -> %s", self.state.value, State.MAPPING.value)
         self.state = State.MAPPING
         while self._running:
             try:
@@ -158,7 +170,9 @@ class Engine:
     # 请求分发
     # ------------------------------------------------------------------ #
     def _handle(self, req: _Request) -> None:
+        previous_state = self.state
         self.state = req.state
+        logger.info("state %s -> %s (request=%s)", previous_state.value, req.state.value, req.kind)
         try:
             if req.kind == "query":
                 result = self._do_query(req.payload["object"], req.payload.get("xy_range") or {})
@@ -177,12 +191,16 @@ class Engine:
                 result = self._warmup()
             else:
                 result = {"success": False, "error": f"unknown request: {req.kind}"}
+            logger.info("request %s result=%s", req.kind, _result_summary(result))
             req.future.set_result(result)
         except Exception as exc:  # noqa: BLE001 —— 保证 Future 一定被回填
             logger.exception("handle %s failed", req.kind)
-            req.future.set_result({"success": False, "error": str(exc)})
+            result = {"success": False, "error": str(exc)}
+            logger.info("request %s result=%s", req.kind, _result_summary(result))
+            req.future.set_result(result)
         finally:
             self.state = State.MAPPING
+            logger.info("state %s -> %s (request=%s)", req.state.value, State.MAPPING.value, req.kind)
 
     # ------------------------------------------------------------------ #
     # MAPPING：匹配刷新
@@ -202,9 +220,13 @@ class Engine:
             status = self.store.update(bgr, depth, camera_pose, intr, is_new)
             status["is_new_anchor"] = is_new
             status["ts"] = time.time()
+            previous_status = self._last_update.get("status")
+            previous_anchor = self._last_update.get("anchor_id")
             self._last_update = status
-            if is_new or status.get("status") != "unmatched":
-                logger.info("update new=%s -> %s", is_new, status.get("status"))
+            if (is_new or status.get("status") != previous_status
+                    or status.get("anchor_id") != previous_anchor):
+                logger.info("mapping update status=%s anchor_id=%s",
+                            status.get("status"), status.get("anchor_id"))
         except Exception:
             logger.exception("mapping tick failed")
 
@@ -252,7 +274,7 @@ class Engine:
 
         all_anchors = self.store.anchors()
         anchors = P.filter_anchors_by_xy(all_anchors, x_range, y_range)
-        logger.info("query[%s] anchors=%d/%d range=%s", object_name, len(anchors), len(all_anchors), use_range)
+        logger.debug("query[%s] anchors=%d/%d range=%s", object_name, len(anchors), len(all_anchors), use_range)
         if use_range and not anchors:
             return {"success": True, "found": False, "object": object_name, "center_3d": None,
                     "message": "坐标范围内没有锚点", "num_anchors_in_range": 0, "num_anchors_total": len(all_anchors)}

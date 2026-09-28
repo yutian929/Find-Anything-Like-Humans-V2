@@ -1,0 +1,8 @@
+-r requirements.txt
+
+# Current config.py runs RynnBrain, SAM2 and SAM3 locally.
+-r requirements.txt
+torch>=2.5
+transformers==5.8.0
+accelerate>=1.0
+modelscope>=1.38
