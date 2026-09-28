@@ -201,11 +201,11 @@ function renderQuery(obj, r) {
       <div class="kv"><b>center_3d</b><span>${c.x.toFixed(3)}, ${c.y.toFixed(3)}, ${c.z.toFixed(3)}</span></div>
       <div class="kv"><b>仲裁</b><span>${r.arbitration?.decision||'-'}</span></div>`;
     if (r.annotated_image) box.innerHTML += `<img class="result" src="data:image/jpeg;base64,${r.annotated_image}" />`;
-    postMap({ type:'setQueryTarget', name: obj });
-    postMap({ type:'flyTo', object:{ center_3d: c } });
+    postMap({ type:'showQuery', result:{ object:obj, found:true, center_3d:c } });
     log('命中 '+obj+' @ '+r.anchor_id);
   } else {
     box.innerHTML = `<div class="mut">未找到：${r.message||obj}</div>`;
+    postMap({ type:'showQuery', result:{ object:obj, found:false } });
     log('未找到 '+obj);
   }
 }
@@ -216,7 +216,8 @@ async function runPredefined(scope) {
     log('检索: '+obj+' …');
     const res = await api('/api/query', { method:'POST', body: form({ object:obj }) });
     log((res.found?'✓ 命中 ':'× 未找到 ')+obj);
-    if (res.found) postMap({ type:'refresh' });
+    postMap({ type:'showQuery', result:{ object:obj, found:res.found,
+      center_3d:res.center_3d } });
   }
   log('预定义检索完成');
 }
@@ -230,10 +231,12 @@ async function runDetect() {
   if (r.found) {
     const c = r.center_3d;
     box.innerHTML = `<div class="kv"><b>检出</b><span>${c? (c.x.toFixed(3)+', '+c.y.toFixed(3)+', '+c.z.toFixed(3)) : '无3D'}</span></div>`;
-    postMap({ type:'showDetect', result:r });
+    postMap({ type:'showDetect', result:{ object:obj, found:true,
+      center_3d:r.center_3d, bbox_3d:r.bbox_3d, pointcloud:r.pointcloud } });
     log('检出 '+obj);
   } else {
     box.innerHTML = `<div class="mut">未检出</div>`; log('未检出 '+obj);
+    postMap({ type:'showDetect', result:null });
   }
   if (r.image_b64) box.innerHTML += `<img class="result" src="data:image/jpeg;base64,${r.image_b64}" />`;
 }

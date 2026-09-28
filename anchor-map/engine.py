@@ -437,16 +437,19 @@ class Engine:
             center_3d = {"x": float(cmap[0]), "y": float(cmap[1]), "z": float(cmap[2])}
             center_xy = [float(cmap[0]), float(cmap[1])]
             center_camera = [float(center_cam[0]), float(center_cam[1]), float(center_cam[2])]
-            _, bbox_3d = P.pointcloud_cam_to_world(pc_cam, pose_mat)
+            pc_world, bbox_3d = P.pointcloud_cam_to_world(pc_cam, pose_mat)
+            pointcloud = P.pointcloud_for_display(pc_world, max_points=3000)
         else:
             logger.warning("detect[%s] 3D center failed: %s", object_name, denoise)
+            pointcloud = {"points": [], "colored": False}
 
         overlay = bgr.copy()
         cv2.rectangle(overlay, (bbox[0], bbox[1]), (bbox[2], bbox[3]), (0, 255, 0), 3)
         return {
             "success": True, "found": True, "object": object_name, "bbox": bbox,
             "center_3d": center_3d, "center_xy": center_xy, "center_camera": center_camera,
-            "bbox_3d": bbox_3d, "denoise": denoise, "image_b64": P.encode_jpeg_b64(overlay),
+            "bbox_3d": bbox_3d, "pointcloud": pointcloud,
+            "denoise": denoise, "image_b64": P.encode_jpeg_b64(overlay),
         }
 
     # ------------------------------------------------------------------ #
@@ -466,6 +469,7 @@ class Engine:
         }
         if pointcloud_world is not None and pointcloud_world.shape[0] >= 3:
             np.save(str(object_dir / "pointcloud.npy"), pointcloud_world.astype(np.float32))
+            urls["pointcloud_url"] = f"{RESULT_URL_PREFIX}/{safe}/pointcloud"
         return urls
 
     def _update_history(self, object_name: str, result: Dict[str, Any]) -> None:

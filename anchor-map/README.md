@@ -54,6 +54,13 @@ RynnBrain 和 SAM2.1 使用 Hugging Face 的 `hf` 命令下载；SAM3 使用 Mod
 的 `modelscope` 命令下载。脚本会验证配置文件和 safetensors 权重是否到位。
 
 浏览器打开 **http://127.0.0.1:9200/**。
+检索或即时检测成功后，3D 地图以原始 RGB 彩色点云显示物体形状，并标出
+地图系 3D 包围框和名称。点云使用帧内 `T_map_camera` 转到地图系，
+与栅格底图的 `origin`、`resolution` 共用米制 XY 坐标。
+检索点云经 `/api/results/{object}/pointcloud` 按需读取，
+即时检测点云随检测响应返回；两者都会限制前端绘制的点数。
+3D 地图从 `/api/objects` 恢复已命中的检索历史；后续检索和即时检测不会清掉
+其他已命中物品。清空检索历史时，地图上的历史点云也会一并移除。
 
 `frame_source.py` 按 `docs/README_rgbd_pose_protocol.md` 订阅
 `ipc:///tmp/rgbd_pose.ipc` / `rgbd.pose`。发布端在一条消息中提供 RGB、Depth、

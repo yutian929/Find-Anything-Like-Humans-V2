@@ -293,6 +293,19 @@ def pointcloud_cam_to_world(pointcloud_cam: np.ndarray, camera_pose: np.ndarray)
     return world.astype(np.float32), compute_bbox_3d_corners(world_xyz)
 
 
+def pointcloud_for_display(points: np.ndarray, max_points: int = 5000) -> Dict[str, Any]:
+    """将地图系点云限量采样为前端可绘制的彩色坐标。"""
+    points = np.asarray(points)
+    if points.ndim != 2 or points.shape[1] not in (3, 6):
+        raise ValueError("pointcloud must have shape (N,3) or (N,6)")
+    if max_points < 1:
+        raise ValueError("max_points must be positive")
+    points = points[np.isfinite(points).all(axis=1)]
+    if len(points) > max_points:
+        points = points[np.linspace(0, len(points) - 1, max_points, dtype=np.int64)]
+    return {"points": points.astype(float).tolist(), "colored": points.shape[1] == 6}
+
+
 # =========================================================================== #
 # SAM3 仲裁：同图去重 + 重合度
 # =========================================================================== #

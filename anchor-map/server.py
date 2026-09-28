@@ -9,6 +9,7 @@ from pathlib import Path
 from typing import Optional
 
 import cv2
+import numpy as np
 from fastapi import FastAPI, Form
 from fastapi.responses import FileResponse, JSONResponse, Response
 
@@ -82,6 +83,17 @@ def create_app(engine: Engine) -> FastAPI:
         if occ is None:
             return JSONResponse(status_code=404, content={"success": False, "error": "无地图"})
         return Response(content=occ.png_bytes, media_type="image/png")
+
+    @app.get("/api/results/{object_name}/pointcloud")
+    def api_results_pointcloud(object_name: str):
+        path = results_dir / P.safe_object_name(object_name) / "pointcloud.npy"
+        if not path.is_file():
+            return JSONResponse(status_code=404, content={"success": False, "error": "pointcloud not found"})
+        try:
+            return {"success": True, **P.pointcloud_for_display(np.load(path, allow_pickle=False))}
+        except (OSError, ValueError) as exc:
+            logger.warning("pointcloud unavailable: %s", exc)
+            return JSONResponse(status_code=500, content={"success": False, "error": "invalid pointcloud"})
 
     @app.get("/api/results/{object_name}/{asset}")
     def api_results_asset(object_name: str, asset: str):

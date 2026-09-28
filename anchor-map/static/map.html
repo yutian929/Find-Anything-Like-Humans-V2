@@ -20,6 +20,7 @@
 <body>
 <div id="hud">
   <span id="info">anchors: 0</span>
+  <span id="selection" style="display:block;margin-top:5px">检索历史：加载中…</span>
   <button onclick="doReset()">复位视角</button>
 </div>
 <script type="module">
@@ -47,12 +48,24 @@ grid.rotation.x = Math.PI/2;                  // 放到 x-y 平面
 scene.add(grid);
 scene.add(new THREE.AxesHelper(1));
 
-// 分组：锚点 / 命中标记 / 检测标记 / 底图
+// 所有对象坐标均为地图系米：XY 与栅格底图共用 origin，Z 为高度。
 const anchorGroup = new THREE.Group(); scene.add(anchorGroup);
-const markGroup = new THREE.Group(); scene.add(markGroup);
+const historyGroup = new THREE.Group(); scene.add(historyGroup);
+const detectGroup = new THREE.Group(); scene.add(detectGroup);
 let mapMesh = null, mapVersion = null;
+const historyEntries = new Map();
+let historyEpoch = 0;
 
-function clearGroup(g) { while (g.children.length) { const c = g.children.pop(); c.geometry?.dispose?.(); c.material?.dispose?.(); } }
+function clearGroup(g) {
+  for (const child of [...g.children]) {
+    g.remove(child);
+    child.traverse(node => {
+      node.geometry?.dispose?.();
+      node.material?.map?.dispose?.();
+      node.material?.dispose?.();
+    });
+  }
+}
 
 // ---------- 锚点 ----------
 async function refreshAnchors() {
@@ -79,48 +92,174 @@ async function refreshMap() {
     const meta = await (await fetch('/api/map/meta', { cache:'no-store' })).json();
     if (!meta.has_map) return;
     if (meta.version === mapVersion) return;
-    mapVersion = meta.version;
     const tex = await new THREE.TextureLoader().loadAsync('/api/map/image?v=' + encodeURIComponent(meta.version));
     const w = meta.width * meta.resolution, h = meta.height * meta.resolution;
     const ox = (meta.origin?.[0]||0) + w/2, oy = (meta.origin?.[1]||0) + h/2;
-    if (mapMesh) { scene.remove(mapMesh); mapMesh.geometry.dispose(); mapMesh.material.dispose(); }
-    mapMesh = new THREE.Mesh(new THREE.PlaneGeometry(w, h), new THREE.MeshBasicMaterial({ map:tex }));
+    if (mapMesh) {
+      scene.remove(mapMesh);
+      mapMesh.geometry.dispose(); mapMesh.material.map?.dispose(); mapMesh.material.dispose();
+    }
+    mapMesh = new THREE.Mesh(new THREE.PlaneGeometry(w, h), new THREE.MeshBasicMaterial({ map:tex, side:THREE.DoubleSide }));
     mapMesh.position.set(ox, oy, -0.01);
     scene.add(mapMesh);
+    grid.position.set(ox, oy, -0.02);
+    grid.scale.set(Math.max(w/20, 0.1), 1, Math.max(h/20, 0.1));
+    if (mapVersion === null) {
+      controls.target.set(ox, oy, 0);
+      camera.position.set(ox + Math.max(w, h)*0.65, oy - Math.max(w, h)*0.65, Math.max(w, h)*0.85);
+      HOME.copy(camera.position);
+    }
+    mapVersion = meta.version;
   } catch (e) {}
 }
 
-// ---------- 标记 ----------
-function addMark(pos, color, r=0.12) {
-  const m = new THREE.Mesh(new THREE.SphereGeometry(r, 20, 20), new THREE.MeshBasicMaterial({ color }));
-  m.position.copy(pos); markGroup.add(m); return m;
+// ---------- 检索与即时检测的真实物体点云 ----------
+function addPointCloud(group, cloud, bbox, accent) {
+  const rows = cloud?.points || [];
+  const valid = rows.filter(p => p.length >= 3 && p.slice(0, 3).every(Number.isFinite));
+  if (valid.length >= 3) {
+    const positions = new Float32Array(valid.length * 3);
+    const colors = new Float32Array(valid.length * 3);
+    const tint = new THREE.Color(accent);
+    valid.forEach((p, i) => {
+      positions.set(p.slice(0, 3), i*3);
+      if (cloud.colored && p.length >= 6) {
+        colors.set([p[3]/255, p[4]/255, p[5]/255], i*3);
+      } else {
+        colors.set([tint.r, tint.g, tint.b], i*3);
+      }
+    });
+    const geometry = new THREE.BufferGeometry();
+    geometry.setAttribute('position', new THREE.BufferAttribute(positions, 3));
+    geometry.setAttribute('color', new THREE.BufferAttribute(colors, 3));
+    group.add(new THREE.Points(geometry, new THREE.PointsMaterial({
+      size:0.045, sizeAttenuation:true, vertexColors:true, transparent:true,
+      opacity:0.95, depthWrite:false,
+    })));
+  }
+  if (Array.isArray(bbox) && bbox.length === 8) {
+    const box = new THREE.Box3().setFromPoints(bbox.map(p => new THREE.Vector3(p.x, p.y, p.z)));
+    group.add(new THREE.Box3Helper(box, accent));
+  }
+  return valid.length;
+}
+function addLabel(group, name, center, bbox, accent) {
+  const canvas = document.createElement('canvas');
+  canvas.width = 512; canvas.height = 128;
+  const ctx = canvas.getContext('2d');
+  ctx.fillStyle = 'rgba(12, 20, 34, 0.9)';
+  ctx.fillRect(0, 12, 512, 104);
+  ctx.strokeStyle = '#' + accent.toString(16).padStart(6, '0');
+  ctx.lineWidth = 5; ctx.strokeRect(3, 15, 506, 98);
+  ctx.fillStyle = '#ffffff'; ctx.font = 'bold 54px sans-serif';
+  ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+  ctx.fillText(name, 256, 64, 470);
+  const sprite = new THREE.Sprite(new THREE.SpriteMaterial({
+    map:new THREE.CanvasTexture(canvas), transparent:true, depthTest:false,
+  }));
+  const top = Array.isArray(bbox) && bbox.length === 8
+    ? Math.max(...bbox.map(p => p.z)) : center.z;
+  sprite.position.set(center.x, center.y, top + 0.25);
+  sprite.scale.set(1.2, 0.3, 1);
+  group.add(sprite);
 }
 function flyTo(p) {
   const target = new THREE.Vector3(p.x, p.y, p.z || 0);
   controls.target.copy(target);
   camera.position.set(target.x + 2.5, target.y - 2.5, target.z + 3);
 }
-async function markQueryTarget(name) {
+function removeHistoryEntry(name) {
+  const entry = historyEntries.get(name);
+  if (!entry) return;
+  clearGroup(entry.group);
+  historyGroup.remove(entry.group);
+  historyEntries.delete(name);
+}
+async function loadHistoryEntry(name, record) {
+  const previous = historyEntries.get(name);
+  if (previous?.updatedAt === record.updated_at) return;
+  removeHistoryEntry(name);
+  const group = new THREE.Group();
+  historyGroup.add(group);
+  const entry = { group, updatedAt:record.updated_at };
+  historyEntries.set(name, entry);
   try {
-    const r = await (await fetch('/api/objects', { cache:'no-store' })).json();
-    const rec = (r.history || {})[name];
-    if (rec && rec.found && rec.center_3d) { addMark(new THREE.Vector3(rec.center_3d.x, rec.center_3d.y, rec.center_3d.z), 0x37c871); }
-  } catch (e) {}
+    // 旧版历史记录没有 pointcloud_url，但点云文件可能已经存在。
+    const url = record.pointcloud_url || '/api/results/' + encodeURIComponent(name) + '/pointcloud';
+    const response = await fetch(url + '?v=' + encodeURIComponent(record.updated_at || Date.now()), { cache:'no-store' });
+    if (!response.ok) throw new Error('点云读取失败');
+    const cloud = await response.json();
+    if (historyEntries.get(name) !== entry) return;
+    entry.pointCount = addPointCloud(group, cloud, record.bbox_3d, 0x37c871);
+  } catch (error) {
+    if (historyEntries.get(name) !== entry) return;
+    addPointCloud(group, null, record.bbox_3d, 0x37c871);
+    entry.pointCount = 0;
+  }
+  if (historyEntries.get(name) === entry) {
+    addLabel(group, name, record.center_3d, record.bbox_3d, 0x37c871);
+    updateHistoryStatus();
+  }
+}
+function updateHistoryStatus(message) {
+  const count = historyEntries.size;
+  document.getElementById('selection').textContent = message || `检索历史：${count} 件物品`;
+}
+async function refreshHistory() {
+  const epoch = ++historyEpoch;
+  try {
+    const response = await fetch('/api/objects', { cache:'no-store' });
+    if (!response.ok) return;
+    const data = await response.json();
+    if (epoch !== historyEpoch) return;
+    const records = data.history || {};
+    for (const name of [...historyEntries.keys()]) {
+      if (!records[name]?.found || !records[name]?.center_3d) removeHistoryEntry(name);
+    }
+    for (const [name, record] of Object.entries(records)) {
+      if (record?.found && record.center_3d) loadHistoryEntry(name, record);
+    }
+    updateHistoryStatus();
+  } catch (error) {
+    updateHistoryStatus('检索历史：读取失败');
+  }
+}
+function showQuery(result) {
+  if (result?.found && result.center_3d) flyTo(result.center_3d);
+  refreshHistory();
+}
+function showDetect(result) {
+  clearGroup(detectGroup);
+  if (!result?.found || !result.center_3d) {
+    document.getElementById('selection').textContent = '即时检测：无 3D 结果';
+    return;
+  }
+  const count = addPointCloud(detectGroup, result.pointcloud, result.bbox_3d, 0x00e5ff);
+  addLabel(detectGroup, result.object || '物品', result.center_3d, result.bbox_3d, 0x00e5ff);
+  document.getElementById('selection').textContent = `即时检测：${result.object} · ${count} 个点`;
+  flyTo(result.center_3d);
 }
 
 // ---------- postMessage 控制 ----------
 window.addEventListener('message', (e) => {
   const d = e.data || {};
-  if (d.type === 'refresh') { refreshAnchors(); refreshMap(); }
-  else if (d.type === 'setQueryTarget') { markQueryTarget(d.name); }
-  else if (d.type === 'showDetect') {
-    if (d.result && d.result.center_3d) { const c=d.result.center_3d; const m=addMark(new THREE.Vector3(c.x,c.y,c.z), 0x00e5ff); flyTo(c); }
-  }
+  if (d.type === 'refresh') { refreshAnchors(); refreshMap(); refreshHistory(); }
+  else if (d.type === 'showQuery') { showQuery(d.result); }
+  else if (d.type === 'showDetect') { showDetect(d.result); }
   else if (d.type === 'flyTo' && d.object?.center_3d) { flyTo(d.object.center_3d); }
-  else if (d.type === 'resetMarks') { clearGroup(markGroup); }
+  else if (d.type === 'resetMarks') {
+    ++historyEpoch;
+    for (const name of [...historyEntries.keys()]) removeHistoryEntry(name);
+    clearGroup(detectGroup);
+    updateHistoryStatus();
+  }
   else if (d.type === 'resetView') { doReset(); }
 });
-window.doReset = function() { controls.target.set(0,0,0); camera.position.copy(HOME); };
+window.doReset = function() {
+  if (mapMesh) controls.target.set(mapMesh.position.x, mapMesh.position.y, 0);
+  else controls.target.set(0, 0, 0);
+  camera.position.copy(HOME);
+};
 
 addEventListener('resize', () => {
   camera.aspect = innerWidth/innerHeight; camera.updateProjectionMatrix(); renderer.setSize(innerWidth, innerHeight);
@@ -128,9 +267,10 @@ addEventListener('resize', () => {
 function animate() { requestAnimationFrame(animate); controls.update(); renderer.render(scene, camera); }
 animate();
 
-refreshAnchors(); refreshMap();
+refreshAnchors(); refreshMap(); refreshHistory();
 setInterval(refreshAnchors, 1500);
 setInterval(refreshMap, 3000);
+setInterval(refreshHistory, 5000);
 parent.postMessage({ type:'mapReady' }, '*');
 </script>
 </body>
