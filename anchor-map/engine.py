@@ -130,8 +130,14 @@ class Engine:
     # 对外 API（入队 + 等 Future）
     # ------------------------------------------------------------------ #
     def _submit(self, req: _Request) -> Any:
+        started = time.monotonic()
         self._queue.put(req)
-        return req.future.result()
+        result = req.future.result()
+        if req.kind in ("query", "detect") and isinstance(result, dict):
+            result["elapsed_s"] = round(time.monotonic() - started, 3)
+            logger.info("request %s object=%s elapsed=%.3fs", req.kind,
+                        req.payload.get("object"), result["elapsed_s"])
+        return result
 
     def semantic_query(self, obj: str, xy_range: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
         return self._submit(_Request("query", {"object": obj, "xy_range": xy_range or {}}, State.QUERYING))

@@ -117,6 +117,7 @@ async function api(path, opts) {
   return r.json();
 }
 function form(obj) { const fd = new FormData(); for (const k in obj) fd.append(k, obj[k]); return fd; }
+function elapsedText(r) { return Number.isFinite(r.elapsed_s) ? `${r.elapsed_s.toFixed(3)} 秒` : '-'; }
 
 // ---------- 状态 ----------
 async function refreshStatus() {
@@ -199,14 +200,16 @@ function renderQuery(obj, r) {
     const c = r.center_3d;
     box.innerHTML = `<div class="kv"><b>命中</b><span class="pill on">${r.anchor_id}</span></div>
       <div class="kv"><b>center_3d</b><span>${c.x.toFixed(3)}, ${c.y.toFixed(3)}, ${c.z.toFixed(3)}</span></div>
-      <div class="kv"><b>仲裁</b><span>${r.arbitration?.decision||'-'}</span></div>`;
+      <div class="kv"><b>仲裁</b><span>${r.arbitration?.decision||'-'}</span></div>
+      <div class="kv"><b>耗时</b><span>${elapsedText(r)}</span></div>`;
     if (r.annotated_image) box.innerHTML += `<img class="result" src="data:image/jpeg;base64,${r.annotated_image}" />`;
     postMap({ type:'showQuery', result:{ object:obj, found:true, center_3d:c } });
-    log('命中 '+obj+' @ '+r.anchor_id);
+    log('命中 '+obj+' @ '+r.anchor_id+' · '+elapsedText(r));
   } else {
-    box.innerHTML = `<div class="mut">未找到：${r.message||obj}</div>`;
+    box.innerHTML = `<div class="mut">未找到：${r.message||obj}</div>
+      <div class="kv"><b>耗时</b><span>${elapsedText(r)}</span></div>`;
     postMap({ type:'showQuery', result:{ object:obj, found:false } });
-    log('未找到 '+obj);
+    log('未找到 '+obj+' · '+elapsedText(r));
   }
 }
 async function runPredefined(scope) {
@@ -215,7 +218,7 @@ async function runPredefined(scope) {
   for (const obj of list) {
     log('检索: '+obj+' …');
     const res = await api('/api/query', { method:'POST', body: form({ object:obj }) });
-    log((res.found?'✓ 命中 ':'× 未找到 ')+obj);
+    log((res.found?'✓ 命中 ':'× 未找到 ')+obj+' · '+elapsedText(res));
     postMap({ type:'showQuery', result:{ object:obj, found:res.found,
       center_3d:res.center_3d } });
   }
@@ -230,12 +233,15 @@ async function runDetect() {
   const box = $('d-result');
   if (r.found) {
     const c = r.center_3d;
-    box.innerHTML = `<div class="kv"><b>检出</b><span>${c? (c.x.toFixed(3)+', '+c.y.toFixed(3)+', '+c.z.toFixed(3)) : '无3D'}</span></div>`;
+    box.innerHTML = `<div class="kv"><b>检出</b><span>${c? (c.x.toFixed(3)+', '+c.y.toFixed(3)+', '+c.z.toFixed(3)) : '无3D'}</span></div>
+      <div class="kv"><b>耗时</b><span>${elapsedText(r)}</span></div>`;
     postMap({ type:'showDetect', result:{ object:obj, found:true,
       center_3d:r.center_3d, bbox_3d:r.bbox_3d, pointcloud:r.pointcloud } });
-    log('检出 '+obj);
+    log('检出 '+obj+' · '+elapsedText(r));
   } else {
-    box.innerHTML = `<div class="mut">未检出</div>`; log('未检出 '+obj);
+    box.innerHTML = `<div class="mut">未检出</div>
+      <div class="kv"><b>耗时</b><span>${elapsedText(r)}</span></div>`;
+    log('未检出 '+obj+' · '+elapsedText(r));
     postMap({ type:'showDetect', result:null });
   }
   if (r.image_b64) box.innerHTML += `<img class="result" src="data:image/jpeg;base64,${r.image_b64}" />`;

@@ -61,6 +61,8 @@ RynnBrain 和 SAM2.1 使用 Hugging Face 的 `hf` 命令下载；SAM3 使用 Mod
 即时检测点云随检测响应返回；两者都会限制前端绘制的点数。
 3D 地图从 `/api/objects` 恢复已命中的检索历史；后续检索和即时检测不会清掉
 其他已命中物品。清空检索历史时，地图上的历史点云也会一并移除。
+`/api/query` 和 `/api/detect` 的响应包含 `elapsed_s`，控制台也显示该值；
+它是从请求进入引擎队列到结果返回的时间，包含排队与首次模型加载。
 
 `frame_source.py` 按 `docs/README_rgbd_pose_protocol.md` 订阅
 `ipc:///tmp/rgbd_pose.ipc` / `rgbd.pose`。发布端在一条消息中提供 RGB、Depth、
