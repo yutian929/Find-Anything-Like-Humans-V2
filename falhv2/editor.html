@@ -1,0 +1,272 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>FALH · 地图编辑器</title>
+<style>
+*{box-sizing:border-box}body{margin:0;background:#eef2f6;color:#18283b;font:14px system-ui,sans-serif}
+header{padding:18px 24px;background:#142639;color:white}h1{font-size:20px;margin:0}
+main{display:grid;grid-template-columns:280px minmax(0,1fr);gap:18px;padding:18px;max-width:1500px;margin:auto}
+aside,.workspace{background:white;border-radius:12px;padding:18px}h2{font-size:14px;margin:20px 0 10px}h2:first-child{margin-top:0}
+.fields,.tools{display:grid;grid-template-columns:1fr 1fr;gap:9px}
+label{display:flex;flex-direction:column;gap:5px;font-size:12px;color:#526376}
+input,button{font:inherit;border:1px solid #cbd5e1;border-radius:6px;padding:9px;min-width:0}input{width:100%}
+button{background:#f8fafc;cursor:pointer;color:#24364b}button:hover{background:#e2e8f0}button.active{background:#187a75;color:white;border-color:#187a75}
+.actions{display:flex;gap:8px;margin-top:12px;flex-wrap:wrap}.hint{font-size:12px;line-height:1.8;color:#64748b}
+.canvas-wrap{overflow:auto;background:#e8edf3;border-radius:8px;padding:12px;margin-top:12px}canvas{display:block;background:white;touch-action:none;max-width:100%;height:auto;margin:auto}
+.legend{display:flex;gap:18px;flex-wrap:wrap;font-size:12px;margin:14px 0}#status{line-height:1.7;color:#187a75;min-height:42px}
+@media(max-width:750px){main{grid-template-columns:1fr}}
+</style>
+</head>
+<body>
+<header><h1>FALH / 地图编辑器</h1></header>
+<main>
+<aside>
+<h2>创建地图</h2>
+<div class="fields">
+<label>宽度 / 格<input id="columns" type="number" min="4" max="40" value="16"></label>
+<label>高度 / 格<input id="rows" type="number" min="4" max="40" value="12"></label>
+<label>每格 / 米<input id="resolution" type="number" min="0.01" step="0.1" value="0.5"></label>
+</div>
+<div class="actions"><button id="new">新建空白地图</button></div>
+<h2>绘制工具</h2>
+<div class="tools" id="tools">
+<button data-tool="wall" class="active">画障碍</button><button data-tool="erase">擦除障碍</button>
+<button data-tool="unknown">未知区域</button><button data-tool="object">放置物体</button>
+<button data-tool="select">选择物体</button><button data-tool="remove">删除物体</button>
+</div>
+<p class="hint">按住鼠标拖动画格子。物体可以放在空闲区域或障碍物上方。</p>
+<h2>物体高度</h2>
+<label>高度 z / 米<input id="objectHeight" type="number" min="0" step="0.05" value="0.85"></label>
+<p class="hint" id="heightHint">先设置高度，再用“放置物体”点击地图。修改高度只影响之后放置的物体。</p>
+<div class="actions"><button id="undo">撤销最近编辑</button></div>
+<h2>场景文件</h2>
+<div class="actions"><button id="save">保存地图</button><button id="load">打开地图</button><input id="file" type="file" accept="application/json,.json" hidden></div>
+<p class="hint">保存二维栅格和物体三维位置，无需手动编辑文件。地图原点在左下角，+x 向右，+y 向上。</p>
+</aside>
+<section class="workspace">
+<strong id="sceneTitle">手绘地图</strong>
+<div class="canvas-wrap"><canvas id="canvas" width="960" height="720"></canvas></div>
+<div class="legend"><span>■ 黑色：障碍</span><span style="color:#94a3b8">■ 灰色：未知</span><span>□ 白色：空闲</span><span style="color:#d97706">● 橙色：物体</span></div>
+<div id="status" role="status">正在初始化…</div>
+</section>
+</main>
+<script>
+(() => {
+'use strict';
+const element = id => document.getElementById(id);
+const canvas = element('canvas'), context = canvas.getContext('2d');
+const clone = value => JSON.parse(JSON.stringify(value));
+let scene, tool = 'wall', selected = null, drawing = false, lastCell = null;
+const undoStack = [];
+
+function showStatus(message, error = false) {
+    element('status').textContent = message;
+    element('status').style.color = error ? '#b91c1c' : '#187a75';
+}
+function remember() {
+    if (scene) undoStack.push(clone(scene));
+    if (undoStack.length > 40) undoStack.shift();
+}
+function sync() {
+    element('columns').value = scene.grid.rows[0].length;
+    element('rows').value = scene.grid.rows.length;
+    element('resolution').value = scene.grid.resolution;
+    element('sceneTitle').textContent = scene.grid.rows[0].length + ' × ' + scene.grid.rows.length + ' 格 · ' + scene.grid.resolution + ' m/格 · ' + scene.objects.length + ' 个物体';
+    element('heightHint').textContent = tool === 'select' && selected
+        ? '已选择 ' + selected + '，修改高度会更新这个物体。'
+        : '先设置高度，再用“放置物体”点击地图。修改高度只影响之后放置的物体。';
+}
+function fresh() {
+    const columns = Number(element('columns').value), rows = Number(element('rows').value);
+    const resolution = Number(element('resolution').value);
+    if (!Number.isInteger(columns) || !Number.isInteger(rows) || columns < 4 || rows < 4 || columns > 40 || rows > 40 || !Number.isFinite(resolution) || resolution <= 0) {
+        showStatus('宽高须为 4–40 的整数，每格尺寸须为正数。', true);
+        return;
+    }
+    remember();
+    scene = {name: 'hand_drawn_map', grid: {resolution, origin: [0, 0], rows: Array.from({length: rows}, () => '.'.repeat(columns))}, objects: []};
+    selected = null;
+    draw();
+    showStatus('地图已创建，选择工具开始绘制。');
+}
+function dimensions() {
+    return {columns: scene.grid.rows[0].length, rows: scene.grid.rows.length, scale: Math.min(60, 960 / scene.grid.rows[0].length)};
+}
+function toScreen(position) {
+    const {rows, scale} = dimensions();
+    return [(position[0] - scene.grid.origin[0]) / scene.grid.resolution * scale,
+            (rows - (position[1] - scene.grid.origin[1]) / scene.grid.resolution) * scale];
+}
+function draw() {
+    sync();
+    const {columns, rows, scale} = dimensions();
+    canvas.width = columns * scale;
+    canvas.height = rows * scale;
+    scene.grid.rows.forEach((line, row) => [...line].forEach((value, column) => {
+        context.fillStyle = value === '#' ? '#000000' : value === '?' ? '#94a3b8' : '#ffffff';
+        context.fillRect(column * scale, row * scale, scale, scale);
+        context.strokeStyle = '#dce3eb';
+        context.strokeRect(column * scale, row * scale, scale, scale);
+    }));
+    for (const obj of scene.objects) {
+        const [left, top] = toScreen(obj.position);
+        context.beginPath();
+        context.arc(left, top, 7, 0, Math.PI * 2);
+        context.fillStyle = '#d97706';
+        context.fill();
+        context.strokeStyle = obj.id === selected ? '#2563eb' : '#ffffff';
+        context.lineWidth = obj.id === selected ? 3 : 1;
+        context.stroke();
+        context.font = '12px sans-serif';
+        context.lineWidth = 3;
+        const label = obj.id + ' z=' + obj.position[2] + 'm';
+        context.strokeStyle = '#ffffff';
+        context.strokeText(label, left + 9, top + 13);
+        context.fillStyle = '#172f46';
+        context.fillText(label, left + 9, top + 13);
+        context.lineWidth = 1;
+    }
+}
+function pointerPosition(event) {
+    const rect = canvas.getBoundingClientRect(), {columns, rows} = dimensions();
+    const horizontal = (event.clientX - rect.left) / rect.width * columns;
+    const vertical = (event.clientY - rect.top) / rect.height * rows;
+    return {column: Math.floor(horizontal), row: Math.floor(vertical),
+        position: [scene.grid.origin[0] + horizontal * scene.grid.resolution,
+                   scene.grid.origin[1] + (rows - vertical) * scene.grid.resolution]};
+}
+function paint(column, row) {
+    const line = scene.grid.rows[row], value = tool === 'wall' ? '#' : tool === 'unknown' ? '?' : '.';
+    scene.grid.rows[row] = line.slice(0, column) + value + line.slice(column + 1);
+}
+function edit(event, initial) {
+    const {column, row, position} = pointerPosition(event), {columns, rows} = dimensions();
+    if (column < 0 || row < 0 || column >= columns || row >= rows) return;
+    if (['wall', 'erase', 'unknown'].includes(tool)) {
+        const previous = lastCell || {column, row};
+        const steps = Math.max(Math.abs(column - previous.column), Math.abs(row - previous.row), 1);
+        for (let step = 0; step <= steps; step++) {
+            paint(Math.round(previous.column + (column - previous.column) * step / steps),
+                  Math.round(previous.row + (row - previous.row) * step / steps));
+        }
+        lastCell = {column, row};
+    } else if (initial) {
+        if (tool === 'object') {
+            const height = Number(element('objectHeight').value);
+            if (!Number.isFinite(height) || height < 0 || element('objectHeight').value === '') {
+                showStatus('物体高度须为非负数。', true);
+                return;
+            }
+            let identifier = 1;
+            while (scene.objects.some(obj => obj.id === 'o' + identifier)) identifier++;
+            scene.objects.push({id: 'o' + identifier, position: [...position.map(value => Number(value.toFixed(3))), height]});
+            selected = null;
+        } else {
+            const nearest = scene.objects.map(obj => ({obj, distance: Math.hypot(obj.position[0] - position[0], obj.position[1] - position[1])}))
+                .sort((first, second) => first.distance - second.distance)[0];
+            const hit = nearest && nearest.distance < scene.grid.resolution * 0.4 ? nearest.obj : null;
+            if (tool === 'remove' && hit) scene.objects = scene.objects.filter(obj => obj.id !== hit.id);
+            selected = tool === 'select' && hit ? hit.id : null;
+            if (selected) element('objectHeight').value = hit.position[2];
+        }
+    }
+    draw();
+}
+canvas.addEventListener('pointerdown', event => {
+    if (event.button !== 0) return;
+    remember();
+    drawing = true;
+    lastCell = null;
+    canvas.setPointerCapture(event.pointerId);
+    edit(event, true);
+});
+canvas.addEventListener('pointermove', event => {
+    if (drawing && ['wall', 'erase', 'unknown'].includes(tool)) edit(event, false);
+});
+for (const eventName of ['pointerup', 'pointercancel', 'lostpointercapture']) {
+    canvas.addEventListener(eventName, () => { drawing = false; lastCell = null; });
+}
+element('tools').addEventListener('click', event => {
+    if (!event.target.dataset.tool) return;
+    tool = event.target.dataset.tool;
+    selected = null;
+    for (const button of element('tools').children) button.classList.toggle('active', button.dataset.tool === tool);
+    draw();
+});
+element('objectHeight').onchange = () => {
+    if (tool !== 'select' || !selected) return;
+    const height = Number(element('objectHeight').value);
+    if (!Number.isFinite(height) || height < 0 || element('objectHeight').value === '') {
+        showStatus('物体高度须为非负数。', true);
+        return;
+    }
+    remember();
+    scene.objects.find(obj => obj.id === selected).position[2] = height;
+    draw();
+};
+element('new').onclick = fresh;
+element('undo').onclick = () => {
+    if (!undoStack.length) return;
+    scene = undoStack.pop();
+    selected = null;
+    draw();
+    showStatus('已撤销。');
+};
+element('save').onclick = () => {
+    const url = URL.createObjectURL(new Blob([JSON.stringify(scene, null, 2)], {type: 'application/json'}));
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = 'map.json';
+    link.click();
+    setTimeout(() => URL.revokeObjectURL(url), 1000);
+    showStatus('地图已导出。');
+};
+function normalizeMap(value) {
+    const grid = value.grid;
+    if (!grid || !Array.isArray(grid.rows) || grid.rows.length < 4 || grid.rows.length > 40 ||
+        typeof grid.rows[0] !== 'string' || grid.rows[0].length < 4 || grid.rows[0].length > 40 ||
+        grid.rows.some(row => typeof row !== 'string' || row.length !== grid.rows[0].length || !/^[.#?]+$/.test(row)) ||
+        !Number.isFinite(grid.resolution) || grid.resolution <= 0 ||
+        !Array.isArray(grid.origin) || grid.origin.length !== 2 || !grid.origin.every(Number.isFinite)) {
+        throw new Error('无效地图：需要 4–40 格的矩形栅格、正分辨率和二维原点。');
+    }
+    if (!Array.isArray(value.objects)) throw new Error('缺少物体列表。');
+    const identifiers = new Set();
+    const objects = value.objects.map(obj => {
+        if (!obj || typeof obj.id !== 'string' || !obj.id || identifiers.has(obj.id) ||
+            !Array.isArray(obj.position) || obj.position.length !== 3 || !obj.position.every(Number.isFinite) ||
+            obj.position[2] < 0 ||
+            obj.position[0] < grid.origin[0] || obj.position[0] >= grid.origin[0] + grid.rows[0].length * grid.resolution ||
+            obj.position[1] < grid.origin[1] || obj.position[1] >= grid.origin[1] + grid.rows.length * grid.resolution) {
+            throw new Error('物体 ID 必须唯一，位置须位于地图内，高度须为非负数。');
+        }
+        identifiers.add(obj.id);
+        return {id: obj.id, position: [...obj.position]};
+    });
+    return {name: typeof value.name === 'string' ? value.name : 'hand_drawn_map',
+        grid: {resolution: grid.resolution, origin: [...grid.origin], rows: [...grid.rows]}, objects};
+}
+element('load').onclick = () => element('file').click();
+element('file').onchange = async event => {
+    try {
+        const file = event.target.files[0];
+        if (!file) return;
+        const loaded = normalizeMap(JSON.parse(await file.text()));
+        remember();
+        scene = loaded;
+        selected = null;
+        draw();
+        showStatus('地图已打开，可以继续绘制。');
+    } catch (error) {
+        showStatus('打开失败：' + error.message, true);
+    } finally {
+        event.target.value = '';
+    }
+};
+fresh();
+})();
+</script>
+</body>
+</html>
