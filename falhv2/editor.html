@@ -25,9 +25,9 @@ button{background:#f8fafc;cursor:pointer;color:#24364b}button:hover{background:#
 <aside>
 <h2>创建地图</h2>
 <div class="fields">
-<label>宽度 / 格<input id="columns" type="number" min="4" max="40" value="16"></label>
-<label>高度 / 格<input id="rows" type="number" min="4" max="40" value="12"></label>
-<label>每格 / 米<input id="resolution" type="number" min="0.01" step="0.1" value="0.5"></label>
+<label>宽度 / 格<input id="columns" type="number" min="4" max="512" value="16"></label>
+<label>高度 / 格<input id="rows" type="number" min="4" max="512" value="12"></label>
+<label>每格 / 米<input id="resolution" type="number" min="0.000001" step="any" value="0.5"></label>
 </div>
 <div class="actions"><button id="new">新建空白地图</button></div>
 <h2>绘制工具</h2>
@@ -37,6 +37,10 @@ button{background:#f8fafc;cursor:pointer;color:#24364b}button:hover{background:#
 <button data-tool="select">选择物体</button><button data-tool="remove">删除物体</button>
 </div>
 <p class="hint">按住鼠标拖动画格子。物体可以放在空闲区域或障碍物上方。</p>
+<div class="tools" id="strokeMode"><button data-shape="brush" class="active">笔刷</button><button data-shape="rectangle">矩形填充</button></div>
+<label>笔刷宽度 / 格<input id="brushSize" type="number" min="1" max="64" step="1" value="1"></label>
+<p class="hint" id="brushHint"></p>
+<p class="hint">先选障碍、未知或擦除，再选择笔刷或矩形填充。矩形拖动时预览，松开后填充；一次拖动可一次撤销。</p>
 <h2>物体高度</h2>
 <label>高度 z / 米<input id="objectHeight" type="number" min="0" step="0.05" value="0.85"></label>
 <p class="hint" id="heightHint">先设置高度，再用“放置物体”点击地图。修改高度只影响之后放置的物体。</p>
@@ -47,6 +51,8 @@ button{background:#f8fafc;cursor:pointer;color:#24364b}button:hover{background:#
 </aside>
 <section class="workspace">
 <strong id="sceneTitle">手绘地图</strong>
+<div class="actions"><button id="resetView">显示全图</button><span id="zoomLevel">100%</span></div>
+<p class="hint">滚轮缩放鼠标所在位置；按住鼠标中键或右键拖动平移；左键使用当前绘制工具。</p>
 <div class="canvas-wrap"><canvas id="canvas" width="960" height="720"></canvas></div>
 <div class="legend"><span>■ 黑色：障碍</span><span style="color:#94a3b8">■ 灰色：未知</span><span>□ 白色：空闲</span><span style="color:#d97706">● 橙色：物体</span></div>
 <div id="status" role="status">正在初始化…</div>
@@ -56,9 +62,12 @@ button{background:#f8fafc;cursor:pointer;color:#24364b}button:hover{background:#
 (() => {
 'use strict';
 const element = id => document.getElementById(id);
+const MAX_GRID_SIZE = 512;
 const canvas = element('canvas'), context = canvas.getContext('2d');
 const clone = value => JSON.parse(JSON.stringify(value));
 let scene, tool = 'wall', selected = null, drawing = false, lastCell = null;
+let zoom = 1, offsetX = 0, offsetY = 0, panning = null;
+let strokeShape = 'brush', rectangle = null;
 const undoStack = [];
 
 function showStatus(message, error = false) {
@@ -77,22 +86,37 @@ function sync() {
     element('heightHint').textContent = tool === 'select' && selected
         ? '已选择 ' + selected + '，修改高度会更新这个物体。'
         : '先设置高度，再用“放置物体”点击地图。修改高度只影响之后放置的物体。';
+    const size = Number(element('brushSize').value);
+    element('brushHint').textContent = Number.isInteger(size) && size >= 1 && size <= 64
+        ? `笔刷覆盖 ${size}×${size} 格，边长约 ${Number((size * scene.grid.resolution).toFixed(4))} 米。`
+        : '笔刷宽度须为 1–64 的整数。';
 }
 function fresh() {
     const columns = Number(element('columns').value), rows = Number(element('rows').value);
     const resolution = Number(element('resolution').value);
-    if (!Number.isInteger(columns) || !Number.isInteger(rows) || columns < 4 || rows < 4 || columns > 40 || rows > 40 || !Number.isFinite(resolution) || resolution <= 0) {
-        showStatus('宽高须为 4–40 的整数，每格尺寸须为正数。', true);
+    if (!Number.isInteger(columns) || !Number.isInteger(rows) || columns < 4 || rows < 4 || columns > MAX_GRID_SIZE || rows > MAX_GRID_SIZE || !Number.isFinite(resolution) || resolution <= 0) {
+        showStatus(`宽高须为 4–${MAX_GRID_SIZE} 的整数，每格尺寸须为正数。`, true);
         return;
     }
     remember();
     scene = {name: 'hand_drawn_map', grid: {resolution, origin: [0, 0], rows: Array.from({length: rows}, () => '.'.repeat(columns))}, objects: []};
     selected = null;
-    draw();
+    resetView();
     showStatus('地图已创建，选择工具开始绘制。');
 }
 function dimensions() {
-    return {columns: scene.grid.rows[0].length, rows: scene.grid.rows.length, scale: Math.min(60, 960 / scene.grid.rows[0].length)};
+    const columns = scene.grid.rows[0].length, rows = scene.grid.rows.length;
+    return {columns, rows, scale: Math.min(60, 960 / columns, 960 / rows)};
+}
+function resetView() {
+    zoom = 1;
+    offsetX = offsetY = 0;
+    draw();
+}
+function canvasPoint(event) {
+    const rect = canvas.getBoundingClientRect();
+    return {x: (event.clientX - rect.left) / rect.width * canvas.width,
+            y: (event.clientY - rect.top) / rect.height * canvas.height};
 }
 function toScreen(position) {
     const {rows, scale} = dimensions();
@@ -104,12 +128,31 @@ function draw() {
     const {columns, rows, scale} = dimensions();
     canvas.width = columns * scale;
     canvas.height = rows * scale;
-    scene.grid.rows.forEach((line, row) => [...line].forEach((value, column) => {
-        context.fillStyle = value === '#' ? '#000000' : value === '?' ? '#94a3b8' : '#ffffff';
-        context.fillRect(column * scale, row * scale, scale, scale);
-        context.strokeStyle = '#dce3eb';
-        context.strokeRect(column * scale, row * scale, scale, scale);
-    }));
+    context.fillStyle = '#e8edf3';
+    context.fillRect(0, 0, canvas.width, canvas.height);
+    context.setTransform(zoom, 0, 0, zoom, offsetX, offsetY);
+    element('zoomLevel').textContent = Math.round(zoom * 100) + '%';
+    context.fillStyle = '#ffffff';
+    context.fillRect(0, 0, columns * scale, rows * scale);
+    const left = Math.max(0, Math.floor(-offsetX / zoom / scale));
+    const right = Math.min(columns, Math.ceil((canvas.width - offsetX) / zoom / scale));
+    const top = Math.max(0, Math.floor(-offsetY / zoom / scale));
+    const bottom = Math.min(rows, Math.ceil((canvas.height - offsetY) / zoom / scale));
+    for (let row = top; row < bottom; row++) {
+      for (let column = left; column < right; column++) {
+        const value = scene.grid.rows[row][column];
+        if (value !== '.') {
+            context.fillStyle = value === '#' ? '#000000' : '#94a3b8';
+            context.fillRect(column * scale, row * scale, scale, scale);
+        }
+        if (scale * zoom >= 8) {
+            context.strokeStyle = '#dce3eb';
+            context.lineWidth = 1 / zoom;
+            context.strokeRect(column * scale, row * scale, scale, scale);
+        }
+      }
+    }
+    context.lineWidth = 1;
     for (const obj of scene.objects) {
         const [left, top] = toScreen(obj.position);
         context.beginPath();
@@ -128,18 +171,46 @@ function draw() {
         context.fillText(label, left + 9, top + 13);
         context.lineWidth = 1;
     }
+    if (rectangle) {
+        const {left, top, right, bottom} = rectangleBounds(rectangle.start, rectangle.end);
+        context.fillStyle = 'rgba(37,99,235,0.25)';
+        context.fillRect(left * scale, top * scale, (right - left + 1) * scale, (bottom - top + 1) * scale);
+        context.strokeStyle = '#2563eb';
+        context.lineWidth = 2 / zoom;
+        context.strokeRect(left * scale, top * scale, (right - left + 1) * scale, (bottom - top + 1) * scale);
+    }
 }
 function pointerPosition(event) {
-    const rect = canvas.getBoundingClientRect(), {columns, rows} = dimensions();
-    const horizontal = (event.clientX - rect.left) / rect.width * columns;
-    const vertical = (event.clientY - rect.top) / rect.height * rows;
+    const point = canvasPoint(event), {rows, scale} = dimensions();
+    const horizontal = (point.x - offsetX) / zoom / scale;
+    const vertical = (point.y - offsetY) / zoom / scale;
     return {column: Math.floor(horizontal), row: Math.floor(vertical),
         position: [scene.grid.origin[0] + horizontal * scene.grid.resolution,
                    scene.grid.origin[1] + (rows - vertical) * scene.grid.resolution]};
 }
+function paintValue() {
+    return tool === 'wall' ? '#' : tool === 'unknown' ? '?' : '.';
+}
+function rectangleBounds(a, b) {
+    const {columns, rows} = dimensions();
+    return {left: Math.max(0, Math.min(a.column, b.column)),
+            right: Math.min(columns - 1, Math.max(a.column, b.column)),
+            top: Math.max(0, Math.min(a.row, b.row)),
+            bottom: Math.min(rows - 1, Math.max(a.row, b.row))};
+}
+function fillArea(a, b, value) {
+    const {left, right, top, bottom} = rectangleBounds(a, b);
+    if (left > right || top > bottom) return;
+    const fill = value.repeat(right - left + 1);
+    for (let row = top; row <= bottom; row++) {
+        const line = scene.grid.rows[row];
+        scene.grid.rows[row] = line.slice(0, left) + fill + line.slice(right + 1);
+    }
+}
 function paint(column, row) {
-    const line = scene.grid.rows[row], value = tool === 'wall' ? '#' : tool === 'unknown' ? '?' : '.';
-    scene.grid.rows[row] = line.slice(0, column) + value + line.slice(column + 1);
+    const size = Number(element('brushSize').value), half = Math.floor(size / 2);
+    fillArea({column: column - half, row: row - half},
+             {column: column - half + size - 1, row: row - half + size - 1}, paintValue());
 }
 function edit(event, initial) {
     const {column, row, position} = pointerPosition(event), {columns, rows} = dimensions();
@@ -175,7 +246,30 @@ function edit(event, initial) {
     draw();
 }
 canvas.addEventListener('pointerdown', event => {
+    if (drawing || panning) return;
+    if (event.button === 1 || event.button === 2) {
+        event.preventDefault();
+        panning = canvasPoint(event);
+        canvas.setPointerCapture(event.pointerId);
+        return;
+    }
     if (event.button !== 0) return;
+    const cell = pointerPosition(event), {columns, rows} = dimensions();
+    if (cell.column < 0 || cell.row < 0 || cell.column >= columns || cell.row >= rows) return;
+    if (['wall', 'erase', 'unknown'].includes(tool)) {
+        if (strokeShape === 'rectangle') {
+            drawing = true;
+            rectangle = {start: cell, end: cell, value: paintValue()};
+            canvas.setPointerCapture(event.pointerId);
+            draw();
+            return;
+        }
+        const size = Number(element('brushSize').value);
+        if (!Number.isInteger(size) || size < 1 || size > 64) {
+            showStatus('笔刷宽度须为 1–64 的整数。', true);
+            return;
+        }
+    }
     remember();
     drawing = true;
     lastCell = null;
@@ -183,11 +277,59 @@ canvas.addEventListener('pointerdown', event => {
     edit(event, true);
 });
 canvas.addEventListener('pointermove', event => {
+    if (rectangle) {
+        rectangle.end = pointerPosition(event);
+        draw();
+        return;
+    }
+    if (panning) {
+        const point = canvasPoint(event);
+        offsetX += point.x - panning.x;
+        offsetY += point.y - panning.y;
+        panning = point;
+        draw();
+        return;
+    }
     if (drawing && ['wall', 'erase', 'unknown'].includes(tool)) edit(event, false);
 });
-for (const eventName of ['pointerup', 'pointercancel', 'lostpointercapture']) {
-    canvas.addEventListener(eventName, () => { drawing = false; lastCell = null; });
+function finishStroke(commit, event) {
+    if (rectangle) {
+        if (commit) {
+            if (event && Number.isFinite(event.clientX)) rectangle.end = pointerPosition(event);
+            remember();
+            fillArea(rectangle.start, rectangle.end, rectangle.value);
+        }
+        rectangle = null;
+        draw();
+    }
+    drawing = false;
+    lastCell = null;
+    panning = null;
 }
+canvas.addEventListener('pointerup', event => finishStroke(true, event));
+for (const eventName of ['pointercancel', 'lostpointercapture']) {
+    canvas.addEventListener(eventName, () => finishStroke(false));
+}
+element('brushSize').oninput = sync;
+element('strokeMode').addEventListener('click', event => {
+    if (!event.target.dataset.shape) return;
+    strokeShape = event.target.dataset.shape;
+    for (const button of element('strokeMode').children) button.classList.toggle('active', button.dataset.shape === strokeShape);
+});
+canvas.addEventListener('contextmenu', event => event.preventDefault());
+canvas.addEventListener('wheel', event => {
+    event.preventDefault();
+    if (drawing || panning) return;
+    const point = canvasPoint(event);
+    const delta = event.deltaY * (event.deltaMode === 1 ? 16 : event.deltaMode === 2 ? canvas.height : 1);
+    const nextZoom = Math.max(0.25, Math.min(32, zoom * Math.exp(-Math.max(-500, Math.min(500, delta)) * 0.002)));
+    const ratio = nextZoom / zoom;
+    offsetX = point.x - (point.x - offsetX) * ratio;
+    offsetY = point.y - (point.y - offsetY) * ratio;
+    zoom = nextZoom;
+    draw();
+}, {passive: false});
+element('resetView').onclick = resetView;
 element('tools').addEventListener('click', event => {
     if (!event.target.dataset.tool) return;
     tool = event.target.dataset.tool;
@@ -225,12 +367,12 @@ element('save').onclick = () => {
 };
 function normalizeMap(value) {
     const grid = value.grid;
-    if (!grid || !Array.isArray(grid.rows) || grid.rows.length < 4 || grid.rows.length > 40 ||
-        typeof grid.rows[0] !== 'string' || grid.rows[0].length < 4 || grid.rows[0].length > 40 ||
+    if (!grid || !Array.isArray(grid.rows) || grid.rows.length < 4 || grid.rows.length > MAX_GRID_SIZE ||
+        typeof grid.rows[0] !== 'string' || grid.rows[0].length < 4 || grid.rows[0].length > MAX_GRID_SIZE ||
         grid.rows.some(row => typeof row !== 'string' || row.length !== grid.rows[0].length || !/^[.#?]+$/.test(row)) ||
         !Number.isFinite(grid.resolution) || grid.resolution <= 0 ||
         !Array.isArray(grid.origin) || grid.origin.length !== 2 || !grid.origin.every(Number.isFinite)) {
-        throw new Error('无效地图：需要 4–40 格的矩形栅格、正分辨率和二维原点。');
+        throw new Error(`无效地图：需要 4–${MAX_GRID_SIZE} 格的矩形栅格、正分辨率和二维原点。`);
     }
     if (!Array.isArray(value.objects)) throw new Error('缺少物体列表。');
     const identifiers = new Set();
@@ -257,7 +399,7 @@ element('file').onchange = async event => {
         remember();
         scene = loaded;
         selected = null;
-        draw();
+        resetView();
         showStatus('地图已打开，可以继续绘制。');
     } catch (error) {
         showStatus('打开失败：' + error.message, true);

@@ -4,7 +4,7 @@ import unittest
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
-from editor_server import EditorHandler
+from map_editor import EditorHandler
 
 
 class EditorServerTests(unittest.TestCase):
