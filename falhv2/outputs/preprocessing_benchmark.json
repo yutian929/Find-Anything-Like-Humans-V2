@@ -1,0 +1,110 @@
+{
+  "environment": {
+    "python": "3.10.19",
+    "numpy": "1.26.4",
+    "scipy": "1.15.3"
+  },
+  "scope": "single_run_preprocessing_prototype_and_existing_route_not_external_planner_comparison",
+  "timing_excludes": [
+    "imports",
+    "file_io",
+    "diagnostic_rendering",
+    "validation"
+  ],
+  "small_map_distance_validation": {
+    "maps": 20,
+    "queries": 700,
+    "max_error_m": 3.5388358909926865e-16
+  },
+  "cases": [
+    {
+      "case": "current_map",
+      "grid_sha256": "df8b852afc038f3ded56d9ed9234bf77c731493a745c639e28355428e3fabb53",
+      "width": 200,
+      "height": 200,
+      "resolution_m": 0.05,
+      "free_cells": 25933,
+      "safe_cells": 8842,
+      "region_sizes": [
+        8032,
+        808,
+        2
+      ],
+      "robot": {
+        "footprint_width_m": 0.465,
+        "footprint_length_m": 0.545,
+        "safety_margin_m": 0.285
+      },
+      "clearance_radius_m": 0.6432073421916418,
+      "old_clearance_sample_count": 60,
+      "old_clearance_sample_seconds": 0.6112483640317805,
+      "old_full_clearance_estimated_seconds": 264.1917304072694,
+      "max_sample_clearance_error_m": 1.4224732503009818e-15,
+      "prototype_preprocessing_seconds": 0.016722918022423983,
+      "component_extraction_seconds": 0.005741590983234346,
+      "unchanged_routing_seconds": 0.0629342959728092,
+      "path_length_m": 454.3500000000592,
+      "waypoints": 9090,
+      "all_safe_centers_visited": true,
+      "all_route_edges_four_connected": true
+    },
+    {
+      "case": "synthetic_300",
+      "grid_sha256": "f4fcd9d681063c2b78da37fb72dbe40a7d2ea389a465c4c5e2e40ecfbb8ec6cf",
+      "width": 300,
+      "height": 300,
+      "resolution_m": 0.05,
+      "free_cells": 85054,
+      "safe_cells": 63986,
+      "region_sizes": [
+        63986
+      ],
+      "robot": {
+        "footprint_width_m": 0.465,
+        "footprint_length_m": 0.545,
+        "safety_margin_m": 0.285
+      },
+      "clearance_radius_m": 0.6432073421916418,
+      "old_clearance_sample_count": 20,
+      "old_clearance_sample_seconds": 0.10330242197960615,
+      "old_full_clearance_estimated_seconds": 439.3142099526711,
+      "max_sample_clearance_error_m": 1.4432899320127035e-15,
+      "prototype_preprocessing_seconds": 0.018152128031942993,
+      "component_extraction_seconds": 0.034541946020908654,
+      "unchanged_routing_seconds": 0.44911031296942383,
+      "path_length_m": 3206.4500000028993,
+      "waypoints": 64130,
+      "all_safe_centers_visited": true,
+      "all_route_edges_four_connected": true
+    },
+    {
+      "case": "synthetic_512",
+      "grid_sha256": "87034b504b434e092c39b8a7462b012c609d60a7f38995e8fb47dfe627d045b6",
+      "width": 512,
+      "height": 512,
+      "resolution_m": 0.05,
+      "free_cells": 249220,
+      "safe_cells": 213462,
+      "region_sizes": [
+        213462
+      ],
+      "robot": {
+        "footprint_width_m": 0.465,
+        "footprint_length_m": 0.545,
+        "safety_margin_m": 0.285
+      },
+      "clearance_radius_m": 0.6432073421916418,
+      "old_clearance_sample_count": 20,
+      "old_clearance_sample_seconds": 0.29331912501947954,
+      "old_full_clearance_estimated_seconds": 3655.0496168677346,
+      "max_sample_clearance_error_m": 2.220446049250313e-15,
+      "prototype_preprocessing_seconds": 0.057558063010219485,
+      "component_extraction_seconds": 0.11890529101947322,
+      "unchanged_routing_seconds": 1.732523696962744,
+      "path_length_m": 10697.099999984583,
+      "waypoints": 213943,
+      "all_safe_centers_visited": true,
+      "all_route_edges_four_connected": true
+    }
+  ]
+}

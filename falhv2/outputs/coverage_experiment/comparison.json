@@ -1,0 +1,601 @@
+{
+  "baseline_commit": "7eadb72",
+  "environment": {
+    "python": "3.10.19",
+    "numpy": "1.26.4",
+    "scipy": "1.15.3",
+    "platform": "Linux-6.8.0-138-generic-x86_64-with-glibc2.35"
+  },
+  "estc_source": {
+    "url": "https://github.com/reso1/LS-MCPP",
+    "commit": "9dcba0b16a3a7669e7632f1b81a04a029d9ba304",
+    "unmodified": true
+  },
+  "repeats": 3,
+  "worker_timeout_seconds": 30,
+  "timing_scope": "routing includes candidate/graph building and open-route normalization; excludes imports, shared preprocessing, validation, plotting and IO",
+  "coverage_contract": "all safe cell centers, four-connected paths, one path per connected region; no prescribed endpoints",
+  "small_map_clearance_check": {
+    "maps": 20,
+    "queries": 700,
+    "max_error_m": 3.5388358909926865e-16
+  },
+  "cases": [
+    {
+      "name": "user_map",
+      "shape": [
+        200,
+        200
+      ],
+      "resolution_m": 0.05,
+      "robot": {
+        "footprint_width_m": 0.465,
+        "footprint_length_m": 0.545,
+        "safety_margin_m": 0.285
+      },
+      "grid_sha256": "df8b852afc038f3ded56d9ed9234bf77c731493a745c639e28355428e3fabb53",
+      "safe_cells": 8842,
+      "region_count": 3,
+      "preprocessing_seconds": [
+        0.016374683007597923,
+        0.01446223899256438,
+        0.013194984989240766
+      ],
+      "median_preprocessing_seconds": 0.01446223899256438,
+      "algorithms": {
+        "greedy": {
+          "status": "complete",
+          "seconds": [
+            0.043434584978967905,
+            0.03314559196587652,
+            0.028082439966965467
+          ],
+          "median_seconds": 0.03314559196587652,
+          "deterministic_within_process": true,
+          "coverage_fraction": 1.0,
+          "collision_free": true,
+          "path_length_m": 454.35,
+          "turn_events": 1894,
+          "quarter_turns": 1964,
+          "waypoints": 9090,
+          "revisit_fraction": 0.028047952951820856,
+          "length_over_vertex_lower_bound": 1.0280574725647698
+        },
+        "tree_walk": {
+          "status": "complete",
+          "seconds": [
+            0.025258058973122388,
+            0.010693367978092283,
+            0.010416239965707064
+          ],
+          "median_seconds": 0.010693367978092283,
+          "deterministic_within_process": true,
+          "coverage_fraction": 1.0,
+          "collision_free": true,
+          "path_length_m": 883.75,
+          "turn_events": 3550,
+          "quarter_turns": 3629,
+          "waypoints": 17678,
+          "revisit_fraction": 0.9993214204931011,
+          "length_over_vertex_lower_bound": 1.9996605950899422
+        },
+        "scanline_sweep": {
+          "status": "complete",
+          "seconds": [
+            0.06181226496119052,
+            0.04698009794810787,
+            0.046863237977959216
+          ],
+          "median_seconds": 0.04698009794810787,
+          "deterministic_within_process": true,
+          "coverage_fraction": 1.0,
+          "collision_free": true,
+          "path_length_m": 476.35,
+          "turn_events": 695,
+          "quarter_turns": 784,
+          "waypoints": 9530,
+          "revisit_fraction": 0.07781045012440624,
+          "length_over_vertex_lower_bound": 1.0778368593732324
+        },
+        "estc_upstream": {
+          "status": "complete",
+          "seconds": [
+            0.22970516700297594,
+            0.22853353404207155,
+            0.2437378489994444
+          ],
+          "median_seconds": 0.22970516700297594,
+          "deterministic_within_process": true,
+          "coverage_fraction": 1.0,
+          "collision_free": true,
+          "path_length_m": 446.45000000000005,
+          "turn_events": 1177,
+          "quarter_turns": 1236,
+          "waypoints": 8932,
+          "revisit_fraction": 0.010178692603483374,
+          "length_over_vertex_lower_bound": 1.010182147301731
+        }
+      }
+    },
+    {
+      "name": "user_map_zero_margin",
+      "shape": [
+        200,
+        200
+      ],
+      "resolution_m": 0.05,
+      "robot": {
+        "footprint_width_m": 0.465,
+        "footprint_length_m": 0.545,
+        "safety_margin_m": 0.0
+      },
+      "grid_sha256": "df8b852afc038f3ded56d9ed9234bf77c731493a745c639e28355428e3fabb53",
+      "safe_cells": 16041,
+      "region_count": 1,
+      "preprocessing_seconds": [
+        0.007821395993232727,
+        0.013247149996459484,
+        0.009290275978855789
+      ],
+      "median_preprocessing_seconds": 0.009290275978855789,
+      "algorithms": {
+        "greedy": {
+          "status": "complete",
+          "seconds": [
+            0.0856478629866615,
+            0.07346861500991508,
+            0.072768961021211
+          ],
+          "median_seconds": 0.07346861500991508,
+          "deterministic_within_process": true,
+          "coverage_fraction": 1.0,
+          "collision_free": true,
+          "path_length_m": 835.0,
+          "turn_events": 2535,
+          "quarter_turns": 2596,
+          "waypoints": 16701,
+          "revisit_fraction": 0.041144567046942214,
+          "length_over_vertex_lower_bound": 1.041147132169576
+        },
+        "tree_walk": {
+          "status": "complete",
+          "seconds": [
+            0.03403601498575881,
+            0.024323286954313517,
+            0.018889557977672666
+          ],
+          "median_seconds": 0.024323286954313517,
+          "deterministic_within_process": true,
+          "coverage_fraction": 1.0,
+          "collision_free": true,
+          "path_length_m": 1603.95,
+          "turn_events": 4492,
+          "quarter_turns": 4565,
+          "waypoints": 32080,
+          "revisit_fraction": 0.9998753194937972,
+          "length_over_vertex_lower_bound": 1.9999376558603492
+        },
+        "scanline_sweep": {
+          "status": "complete",
+          "seconds": [
+            0.09547887602820992,
+            0.07942798599833623,
+            0.07921174599323422
+          ],
+          "median_seconds": 0.07942798599833623,
+          "deterministic_within_process": true,
+          "coverage_fraction": 1.0,
+          "collision_free": true,
+          "path_length_m": 826.9000000000001,
+          "turn_events": 940,
+          "quarter_turns": 1026,
+          "waypoints": 16539,
+          "revisit_fraction": 0.03104544604451094,
+          "length_over_vertex_lower_bound": 1.0310473815461347
+        },
+        "estc_upstream": {
+          "status": "complete",
+          "seconds": [
+            0.4560406950186007,
+            0.4340038829832338,
+            0.4307249939884059
+          ],
+          "median_seconds": 0.4340038829832338,
+          "deterministic_within_process": true,
+          "coverage_fraction": 1.0,
+          "collision_free": true,
+          "path_length_m": 806.0500000000001,
+          "turn_events": 1458,
+          "quarter_turns": 1514,
+          "waypoints": 16122,
+          "revisit_fraction": 0.005049560501215635,
+          "length_over_vertex_lower_bound": 1.0050498753117207
+        }
+      }
+    },
+    {
+      "name": "rectangles_300",
+      "shape": [
+        300,
+        300
+      ],
+      "resolution_m": 0.05,
+      "robot": {
+        "footprint_width_m": 0.465,
+        "footprint_length_m": 0.545,
+        "safety_margin_m": 0.285
+      },
+      "grid_sha256": "f4fcd9d681063c2b78da37fb72dbe40a7d2ea389a465c4c5e2e40ecfbb8ec6cf",
+      "safe_cells": 63986,
+      "region_count": 1,
+      "preprocessing_seconds": [
+        0.019085708016064018,
+        0.017239760025404394,
+        0.01716716098599136
+      ],
+      "median_preprocessing_seconds": 0.017239760025404394,
+      "algorithms": {
+        "greedy": {
+          "status": "complete",
+          "seconds": [
+            0.2103229089989327,
+            0.20120938401669264,
+            0.19946928700665012
+          ],
+          "median_seconds": 0.20120938401669264,
+          "deterministic_within_process": true,
+          "coverage_fraction": 1.0,
+          "collision_free": true,
+          "path_length_m": 3206.4500000000003,
+          "turn_events": 2592,
+          "quarter_turns": 2619,
+          "waypoints": 64130,
+          "revisit_fraction": 0.0022504922951895726,
+          "length_over_vertex_lower_bound": 1.0022505274673752
+        },
+        "tree_walk": {
+          "status": "complete",
+          "seconds": [
+            0.11034549999749288,
+            0.11274431098718196,
+            0.11887980200117454
+          ],
+          "median_seconds": 0.11274431098718196,
+          "deterministic_within_process": true,
+          "coverage_fraction": 1.0,
+          "collision_free": true,
+          "path_length_m": 6398.450000000001,
+          "turn_events": 4964,
+          "quarter_turns": 4992,
+          "waypoints": 127970,
+          "revisit_fraction": 0.9999687431625668,
+          "length_over_vertex_lower_bound": 1.9999843713370322
+        },
+        "scanline_sweep": {
+          "status": "complete",
+          "seconds": [
+            0.16988564899656922,
+            0.16836889600381255,
+            0.1781672359793447
+          ],
+          "median_seconds": 0.16988564899656922,
+          "deterministic_within_process": true,
+          "coverage_fraction": 1.0,
+          "collision_free": true,
+          "path_length_m": 3211.9500000000003,
+          "turn_events": 978,
+          "quarter_turns": 1006,
+          "waypoints": 64240,
+          "revisit_fraction": 0.003969618354014941,
+          "length_over_vertex_lower_bound": 1.0039696803938423
+        },
+        "estc_upstream": {
+          "status": "complete",
+          "seconds": [
+            2.1162305820034817,
+            2.0001206679735333,
+            2.0647741120192222
+          ],
+          "median_seconds": 2.0647741120192222,
+          "deterministic_within_process": true,
+          "coverage_fraction": 1.0,
+          "collision_free": true,
+          "path_length_m": 3200.75,
+          "turn_events": 1127,
+          "quarter_turns": 1152,
+          "waypoints": 64016,
+          "revisit_fraction": 0.00046885256149782763,
+          "length_over_vertex_lower_bound": 1.0004688598890366
+        }
+      }
+    },
+    {
+      "name": "rectangles_512",
+      "shape": [
+        512,
+        512
+      ],
+      "resolution_m": 0.05,
+      "robot": {
+        "footprint_width_m": 0.465,
+        "footprint_length_m": 0.545,
+        "safety_margin_m": 0.285
+      },
+      "grid_sha256": "87034b504b434e092c39b8a7462b012c609d60a7f38995e8fb47dfe627d045b6",
+      "safe_cells": 213462,
+      "region_count": 1,
+      "preprocessing_seconds": [
+        0.054607088037300855,
+        0.052145893976558,
+        0.05172654701163992
+      ],
+      "median_preprocessing_seconds": 0.052145893976558,
+      "algorithms": {
+        "greedy": {
+          "status": "complete",
+          "seconds": [
+            0.870415718993172,
+            0.8624564239871688,
+            0.8569602399948053
+          ],
+          "median_seconds": 0.8624564239871688,
+          "deterministic_within_process": true,
+          "coverage_fraction": 1.0,
+          "collision_free": true,
+          "path_length_m": 10697.1,
+          "turn_events": 4657,
+          "quarter_turns": 4679,
+          "waypoints": 213943,
+          "revisit_fraction": 0.0022533284612717953,
+          "length_over_vertex_lower_bound": 1.0022533390174317
+        },
+        "tree_walk": {
+          "status": "complete",
+          "seconds": [
+            0.5750706369872205,
+            0.5865910929860547,
+            0.5850413499865681
+          ],
+          "median_seconds": 0.5850413499865681,
+          "deterministic_within_process": true,
+          "coverage_fraction": 1.0,
+          "collision_free": true,
+          "path_length_m": 21346.050000000003,
+          "turn_events": 8739,
+          "quarter_turns": 8764,
+          "waypoints": 426922,
+          "revisit_fraction": 0.9999906306508887,
+          "length_over_vertex_lower_bound": 1.9999953153034982
+        },
+        "scanline_sweep": {
+          "status": "complete",
+          "seconds": [
+            0.7303932529757731,
+            0.7114585390081629,
+            0.6992692439816892
+          ],
+          "median_seconds": 0.7114585390081629,
+          "deterministic_within_process": true,
+          "coverage_fraction": 1.0,
+          "collision_free": true,
+          "path_length_m": 10695.25,
+          "turn_events": 1610,
+          "quarter_turns": 1636,
+          "waypoints": 213906,
+          "revisit_fraction": 0.0020799955027124267,
+          "length_over_vertex_lower_bound": 1.0020800052468601
+        },
+        "estc_upstream": {
+          "status": "complete",
+          "seconds": [
+            7.714565166970715,
+            7.9295234909513965,
+            7.7294471570057794
+          ],
+          "median_seconds": 7.7294471570057794,
+          "deterministic_within_process": true,
+          "coverage_fraction": 1.0,
+          "collision_free": true,
+          "path_length_m": 10674.95,
+          "turn_events": 2096,
+          "quarter_turns": 2122,
+          "waypoints": 213500,
+          "revisit_fraction": 0.00017801763311502749,
+          "length_over_vertex_lower_bound": 1.0001780184670737
+        }
+      }
+    },
+    {
+      "name": "thin_disconnected",
+      "shape": [
+        65,
+        81
+      ],
+      "resolution_m": 0.5,
+      "robot": {
+        "footprint_width_m": 0.28,
+        "footprint_length_m": 0.28,
+        "safety_margin_m": 0.0
+      },
+      "grid_sha256": "e1aa41b07642231c30a38fe1aaaec632d9c05a067d027ffbf64aaee878e94e0f",
+      "safe_cells": 1100,
+      "region_count": 3,
+      "preprocessing_seconds": [
+        0.001784941996447742,
+        0.0011756099993363023,
+        0.0011149230413138866
+      ],
+      "median_preprocessing_seconds": 0.0011756099993363023,
+      "algorithms": {
+        "greedy": {
+          "status": "complete",
+          "seconds": [
+            0.004663766012527049,
+            0.004084940999746323,
+            0.0039519849815405905
+          ],
+          "median_seconds": 0.004084940999746323,
+          "deterministic_within_process": true,
+          "coverage_fraction": 1.0,
+          "collision_free": true,
+          "path_length_m": 548.5,
+          "turn_events": 43,
+          "quarter_turns": 43,
+          "waypoints": 1100,
+          "revisit_fraction": 0.0,
+          "length_over_vertex_lower_bound": 1.0
+        },
+        "tree_walk": {
+          "status": "complete",
+          "seconds": [
+            0.001489860995206982,
+            0.0011183660244569182,
+            0.0010361369932070374
+          ],
+          "median_seconds": 0.0011183660244569182,
+          "deterministic_within_process": true,
+          "coverage_fraction": 1.0,
+          "collision_free": true,
+          "path_length_m": 1096.0,
+          "turn_events": 88,
+          "quarter_turns": 90,
+          "waypoints": 2195,
+          "revisit_fraction": 0.9954545454545455,
+          "length_over_vertex_lower_bound": 1.9981768459434823
+        },
+        "scanline_sweep": {
+          "status": "complete",
+          "seconds": [
+            0.021211455983575433,
+            0.02028272399911657,
+            0.02009279397316277
+          ],
+          "median_seconds": 0.02028272399911657,
+          "deterministic_within_process": true,
+          "coverage_fraction": 1.0,
+          "collision_free": true,
+          "path_length_m": 548.5,
+          "turn_events": 42,
+          "quarter_turns": 42,
+          "waypoints": 1100,
+          "revisit_fraction": 0.0,
+          "length_over_vertex_lower_bound": 1.0
+        },
+        "estc_upstream": {
+          "status": "complete",
+          "seconds": [
+            0.10019859299063683,
+            0.08378976199310273,
+            0.08388086402555928
+          ],
+          "median_seconds": 0.08388086402555928,
+          "deterministic_within_process": true,
+          "coverage_fraction": 1.0,
+          "collision_free": true,
+          "path_length_m": 1041.0,
+          "turn_events": 71,
+          "quarter_turns": 72,
+          "waypoints": 2085,
+          "revisit_fraction": 0.8954545454545455,
+          "length_over_vertex_lower_bound": 1.8979033728350045
+        }
+      }
+    },
+    {
+      "name": "cluttered_120x160",
+      "shape": [
+        120,
+        160
+      ],
+      "resolution_m": 0.1,
+      "robot": {
+        "footprint_width_m": 0.28,
+        "footprint_length_m": 0.28,
+        "safety_margin_m": 0.0
+      },
+      "grid_sha256": "7dca8d0c574bc91608f74de407b0b41b37d91b9091cde7dedd666f34c4f9c597",
+      "safe_cells": 12438,
+      "region_count": 1,
+      "preprocessing_seconds": [
+        0.004193896020296961,
+        0.003948239027522504,
+        0.003689429024234414
+      ],
+      "median_preprocessing_seconds": 0.003948239027522504,
+      "algorithms": {
+        "greedy": {
+          "status": "complete",
+          "seconds": [
+            0.07207467599073425,
+            0.05384417896857485,
+            0.05376601900206879
+          ],
+          "median_seconds": 0.05384417896857485,
+          "deterministic_within_process": true,
+          "coverage_fraction": 1.0,
+          "collision_free": true,
+          "path_length_m": 1317.6000000000001,
+          "turn_events": 2858,
+          "quarter_turns": 2982,
+          "waypoints": 13177,
+          "revisit_fraction": 0.05941469689660717,
+          "length_over_vertex_lower_bound": 1.0594194741497145
+        },
+        "tree_walk": {
+          "status": "complete",
+          "seconds": [
+            0.032934485003352165,
+            0.014663568988908082,
+            0.019375845964532346
+          ],
+          "median_seconds": 0.019375845964532346,
+          "deterministic_within_process": true,
+          "coverage_fraction": 1.0,
+          "collision_free": true,
+          "path_length_m": 2487.3,
+          "turn_events": 4882,
+          "quarter_turns": 5040,
+          "waypoints": 24874,
+          "revisit_fraction": 0.9998392024441228,
+          "length_over_vertex_lower_bound": 1.9999195947575783
+        },
+        "scanline_sweep": {
+          "status": "complete",
+          "seconds": [
+            0.09146402700571343,
+            0.08592877496266738,
+            0.08602788503048941
+          ],
+          "median_seconds": 0.08602788503048941,
+          "deterministic_within_process": true,
+          "coverage_fraction": 1.0,
+          "collision_free": true,
+          "path_length_m": 1389.6000000000001,
+          "turn_events": 1454,
+          "quarter_turns": 1605,
+          "waypoints": 13897,
+          "revisit_fraction": 0.11730181701238142,
+          "length_over_vertex_lower_bound": 1.117311248693415
+        },
+        "estc_upstream": {
+          "status": "complete",
+          "seconds": [
+            0.3481056419550441,
+            0.351093070989009,
+            0.34785551502136514
+          ],
+          "median_seconds": 0.3481056419550441,
+          "deterministic_within_process": true,
+          "coverage_fraction": 1.0,
+          "collision_free": true,
+          "path_length_m": 1262.5,
+          "turn_events": 2984,
+          "quarter_turns": 3088,
+          "waypoints": 12626,
+          "revisit_fraction": 0.015114970252452163,
+          "length_over_vertex_lower_bound": 1.0151161855752995
+        }
+      }
+    }
+  ]
+}
