@@ -137,7 +137,6 @@ python -B falhv2/camera_parameters.py
 | `mount.pitch_deg` | **人工填写** 俯仰角，单位度；向下为正，水平为 0 |
 | `mount.yaw_deg` | **人工填写** 相对底盘前方的偏航角，单位度；向左为正，正前方为 0 |
 | `observation_quality.min_distance_m/max_distance_m` | **人工填写** 合格观察的最近/最远物体中心距离，单位米，依据拍摄效果确定，不直接等同于深度测量量程 |
-| `observation_quality.min_object_width_px/min_object_height_px` | **人工填写** 物体投影的最小宽高，单位像素，依据识别所需细节确定 |
 
 安装角采用前、左、上参考轴，零角表示镜头水平朝向底盘前方；旋转约定为 `Rz(yaw) Ry(pitch) Rx(roll)`，再转换到相机光学坐标（右、下、前）。所有 `null` 都表示尚未填写，不默认解释为零。底盘原点应与 A1 站位参考点一致；首版底盘原点按地面上的 `(x,y,0)` 表示。
 
@@ -157,7 +156,7 @@ A1 路径固定后，A2 比较两种候选生成方式：**物体驱动**，从�
 
 两条路线使用相同的相机质量模型，输出站位、方向、稀疏覆盖关系和未满足目标。A3 共用动态投票 / 贪心集合覆盖与冗余删除，分别统计站位和照片。相同候选下，两条路线应得到相同覆盖关系；采样密度或随机点数本身不保证质量覆盖。
 
-开始 A2 前需要确定相机参数、物体尺寸或明确假设，以及像素质量阈值。当前 `examples/map.json` 没有物体，需另备观察测试场景。详细方案、缺口处理和公平比较规则见[研究文档第 6 节](../docs/falhv2/path_constrained_anchor_selection_v0_20261013.md#6-a2-与-a3-的两条实现路线)，待办见[交接清单](../docs/falhv2/research_roadmap_and_handoff.md)。
+首版 A2 的物体输入为带稳定 ID 的三维中心点，依据可执行动作、视场、高度和观察距离判断预计覆盖；不要求物体尺寸或 AABB，也不计算物体像素宽高。开始前需确认相机安装位姿和有效观察距离，预计覆盖不等同于已经拍清楚或识别成功。当前 `examples/map.json` 没有物体，需另备观察测试场景。详细方案、缺口处理和公平比较规则见[研究文档第 6 节](../docs/falhv2/path_constrained_anchor_selection_v0_20261013.md#6-a2-与-a3-的两条实现路线)，待办见[交接清单](../docs/falhv2/research_roadmap_and_handoff.md)。
 
 ## 数据约定
 

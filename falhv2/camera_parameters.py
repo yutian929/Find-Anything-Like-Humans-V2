@@ -94,7 +94,6 @@ def make_camera_config(profile) -> dict:
         },
         "observation_quality": {
             "min_distance_m": None, "max_distance_m": None,
-            "min_object_width_px": None, "min_object_height_px": None,
         },
     }
 

@@ -17,18 +17,16 @@
   },
   "mount": {
     "position_in_base_m": [
-      null,
-      null,
-      null
+      0.23,
+      0.0,
+      0.5
     ],
-    "roll_deg": null,
-    "pitch_deg": null,
-    "yaw_deg": null
+    "roll_deg": 0.0,
+    "pitch_deg": 0.0,
+    "yaw_deg": 0.0
   },
   "observation_quality": {
-    "min_distance_m": null,
-    "max_distance_m": null,
-    "min_object_width_px": null,
-    "min_object_height_px": null
+    "min_distance_m": 0.2,
+    "max_distance_m": 3.0
   }
 }

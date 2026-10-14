@@ -62,6 +62,7 @@ class CameraParameterTests(unittest.TestCase):
         self.assertEqual(result["mount"]["position_in_base_m"], [None]*3)
         self.assertTrue(all(result["mount"][key] is None for key in ("roll_deg", "pitch_deg", "yaw_deg")))
         self.assertTrue(all(value is None for value in result["observation_quality"].values()))
+        self.assertEqual(set(result["observation_quality"]), {"min_distance_m", "max_distance_m"})
         for invalid in (0, -1, math.nan, math.inf):
             with self.assertRaises(camera.CameraReadError):
                 camera.make_camera_config(profile(fx=invalid))
