@@ -1,0 +1,34 @@
+{
+  "camera": {
+    "width": 1280,
+    "height": 720,
+    "fx": 911.4230346679688,
+    "fy": 909.72412109375,
+    "cx": 644.8355712890625,
+    "cy": 363.35589599609375,
+    "distortion_model": "inverse_brown_conrady",
+    "distortion_coefficients": [
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0
+    ]
+  },
+  "mount": {
+    "position_in_base_m": [
+      null,
+      null,
+      null
+    ],
+    "roll_deg": null,
+    "pitch_deg": null,
+    "yaw_deg": null
+  },
+  "observation_quality": {
+    "min_distance_m": null,
+    "max_distance_m": null,
+    "min_object_width_px": null,
+    "min_object_height_px": null
+  }
+}

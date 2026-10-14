@@ -36,8 +36,10 @@ falhv2/
 ├── editor.html                  # 地图编辑器页面
 ├── map_editor.py                # 地图编辑器启动入口
 ├── path_planner.py              # A1：可通行区域与区域内路线
+├── camera_parameters.py    # D435i 相机标定导出
 ├── config/
-│   └── robot.example.json       # 机器人尺寸与安全距离示例
+│   ├── robot.example.json       # 机器人尺寸与安全距离示例
+│   └── camera.d435i.json        # 当前 D435i 的默认 RGB 内参
 ├── examples/
 │   └── map.json                 # 受版本控制的最小示例地图
 ├── outputs/                     # 本地产物，Git 忽略
@@ -110,6 +112,44 @@ python -B falhv2/path_planner.py \
 **输出：** 每个区域的格子集合、路线、世界坐标航点、长度及汇总统计，另附 SVG 诊断图。路线首尾由算法确定；断开的区域分别输出。没有任何可通行格时，命令以非零状态退出并说明原因。
 
 区域数量与路线长度取决于输入地图和机器人配置。物体视觉覆盖标记为 `not_evaluated`，留待 A2 判断。实际执行时还需把机器人当前位置接入对应区域路线，并由导航控制器跟踪。
+
+## 读取 D435i 相机参数
+
+使用 conda `test` 环境中的 RealSense Python SDK `pyrealsense2` 直接读取标定。当前已安装 `2.59.1.11053`；新环境可运行 `python -m pip install pyrealsense2`。在仓库根目录执行：
+
+```bash
+python -B falhv2/camera_parameters.py
+```
+
+默认读取 RGB **1280×720、BGR8、30 FPS** 对应的内参，保存到本地 `falhv2/outputs/camera.d435i.json`。脚本查询设备标定，不启动视频采集；后续实际图像应使用相同的分辨率及几何处理。
+
+[`config/camera.d435i.json`](config/camera.d435i.json) 使用与读取结果完全相同的精简结构，作为后续 A2 的默认输入。当前已复制一份真机内参，待填项仍为 `null`。交给其他用户时，按以下步骤准备自己的配置：
+
+1. 连接相机，运行脚本生成 `outputs/camera.d435i.json`。
+2. 人工填写该文件中 `mount` 与 `observation_quality` 的所有 `null`，含义见下表。
+3. 将补全后的文件自行复制到 `config/camera.d435i.json`，供离线规划使用。重复读取只更新指定输出文件，脚本不自动替换默认配置。
+
+| 字段 | 来源或填写方式 |
+|---|---|
+| `camera.width/height`、`fx/fy/cx/cy`、畸变模型与系数 | Python SDK 自动读取，匹配实际使用的图像分辨率 |
+| `mount.position_in_base_m` | **人工填写** `[x, y, z]`，单位米；RGB 光心相对底盘原点的位置，底盘 `+x` 向前、`+y` 向左、`+z` 向上，`z` 为相对底盘原点的高度偏移 |
+| `mount.roll_deg` | **人工填写** 横滚角，单位度；绕相机安装参考坐标的前向轴按右手规则为正 |
+| `mount.pitch_deg` | **人工填写** 俯仰角，单位度；向下为正，水平为 0 |
+| `mount.yaw_deg` | **人工填写** 相对底盘前方的偏航角，单位度；向左为正，正前方为 0 |
+| `observation_quality.min_distance_m/max_distance_m` | **人工填写** 合格观察的最近/最远物体中心距离，单位米，依据拍摄效果确定，不直接等同于深度测量量程 |
+| `observation_quality.min_object_width_px/min_object_height_px` | **人工填写** 物体投影的最小宽高，单位像素，依据识别所需细节确定 |
+
+安装角采用前、左、上参考轴，零角表示镜头水平朝向底盘前方；旋转约定为 `Rz(yaw) Ry(pitch) Rx(roll)`，再转换到相机光学坐标（右、下、前）。所有 `null` 都表示尚未填写，不默认解释为零。底盘原点应与 A1 站位参考点一致；首版底盘原点按地面上的 `(x,y,0)` 表示。
+
+支持通过 `--width`、`--height`、`--fps`、`--format` 指定实际拍摄模式，`--serial` 选择设备；列出支持的 RGB 模式：
+
+```bash
+python -B falhv2/camera_parameters.py --list-modes
+```
+
+在 `falhv2` 目录内运行时省略命令中的 `falhv2/` 即可。深度流可通过 `--stream depth --width 640 --height 480 --output falhv2/outputs/camera.depth.json` 另存；后续 RGB 观察模型使用 RGB 配置。
+
+裁切、缩放或去畸变后，应使用对应的新内参。畸变模型与系数保持 SDK 返回值。标定含义参考 [RealSense SDK API](https://github.com/realsenseai/librealsense/blob/master/examples/sensor-control/api_how_to.h)及[投影说明](https://github.com/realsenseai/librealsense/wiki/Projection-in-RealSense-SDK-2.0)。
 
 ## A2 与 A3 的实现计划
 
