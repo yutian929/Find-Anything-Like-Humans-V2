@@ -447,7 +447,9 @@ def diagnostic_svg(scene: dict[str, Any], result: dict[str, Any]) -> str:
 
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--scene", type=Path, default=Path(__file__).parent / "outputs/map.json")
+    local_map = Path(__file__).parent / "outputs/map.json"
+    default_map = local_map if local_map.is_file() else Path(__file__).parent / "examples/map.json"
+    parser.add_argument("--scene", type=Path, default=default_map)
     parser.add_argument("--robot", type=Path,
                         default=Path(__file__).parent / "config/robot.example.json")
     parser.add_argument("--output", type=Path, default=Path(__file__).parent / "outputs/path_plan.json")

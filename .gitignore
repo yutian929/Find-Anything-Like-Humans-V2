@@ -1,2 +1,6 @@
 # Keep reference papers local.
 *.[pP][dD][fF]
+
+# Local maps, generated plans and diagnostic images.
+/falhv2/outputs/
+/falhv2/outputs_/

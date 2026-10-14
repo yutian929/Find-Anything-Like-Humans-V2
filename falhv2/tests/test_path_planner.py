@@ -68,7 +68,7 @@ class PathPlannerTests(unittest.TestCase):
 
     def test_example_map_plan_and_svg(self):
         root = Path(__file__).resolve().parents[1]
-        data = json.loads((root / "outputs/map.json").read_text())
+        data = json.loads((root / "examples/map.json").read_text())
         data.pop("objects")  # A1 needs only the grid, even for an editor export.
         config = json.loads((root / "config/robot.example.json").read_text())
         result = plan(data, config)
@@ -77,7 +77,7 @@ class PathPlannerTests(unittest.TestCase):
                          result["statistics"]["traversable_cells"])
         grid = GridMap.from_scene(data)
         clearance = math.hypot(config["robot"]["footprint_width_m"],
-                               config["robot"]["footprint_length_m"]) / 2
+                               config["robot"]["footprint_length_m"]) / 2 + config["robot"]["safety_margin_m"]
         for region in result["regions"]:
             route = [tuple(cell) for cell in region["route_cells"]]
             for a, b in zip(route, route[1:]):
