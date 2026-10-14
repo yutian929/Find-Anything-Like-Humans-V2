@@ -21,9 +21,9 @@ cd /home/hri/yutian/Find-Anything-Like-Humans-V2
 |---|---|---|
 | 地图编辑器 | 绘制栅格地图、放置无类别物体中心点、导入导出 JSON | 已完成，见[地图编辑器](#地图编辑器) |
 | A1 区域与路线规划 | 根据地图、机器人尺寸和安全距离求全部可通行区域及区域内路线 | 已实现 EDT + OpenCV 连通域 + 分区扫描，见[A1](#a1区域与路线规划) |
-| A2 观察模型 | 共用质量判断；比较物体反向支持区域与路径位置采样 | 下一步，方案已确定，尚未实现 |
-| A3 锚点选择 | 物体投票、贪心集合覆盖、冗余删除与拍摄方向选择 | 待实现 |
-| A4 离线验证 | 精确解核对、基线比较、质量与成本评估 | 待实现 |
+| A2 观察模型 | 三维点视场/距离覆盖；物体驱动与位置驱动 | 实验分支已实现，见[实验入口](#a2-与-a3-的实验实现) |
+| A3 锚点选择 | 动态投票、冗余删除与拍摄方向选择 | 实验实现完成，待现场验证 |
+| A4 离线验证 | 精确解核对、基线比较、质量与成本评估 | 完成首轮八场景点模型实验 |
 | B 静态真实实验 | 按锚点采集、检查实际图像质量、检索与找物 | 待实现 |
 | C 动态维护 | 物体变化后更新分布、复核锚点、刷新记忆 | 待实现 |
 | D 长期评估 | 多轮变化、消融实验与失败分析 | 待实现 |
@@ -150,13 +150,28 @@ python -B falhv2/camera_parameters.py --list-modes
 
 裁切、缩放或去畸变后，应使用对应的新内参。畸变模型与系数保持 SDK 返回值。标定含义参考 [RealSense SDK API](https://github.com/realsenseai/librealsense/blob/master/examples/sensor-control/api_how_to.h)及[投影说明](https://github.com/realsenseai/librealsense/wiki/Projection-in-RealSense-SDK-2.0)。
 
-## A2 与 A3 的实现计划
+## A2 与 A3 的实验实现
 
-A1 路径固定后，A2 比较两种候选生成方式：**物体驱动**，从每个物体反推合格观察位置和方向，再与路径相交；**位置驱动**，沿路径均匀或随机采样后，检查每个观察能够覆盖哪些物体。首版优先实现前者，以后者作对照。
+两种驱动方法已在实验分支 `experiment/anchor-candidate-drivers` 中实现，使用独立的 `anchor_experiments/` 模块。共用三维物体点的视场/距离观察模型、A1 路径和动态投票选站；尚未评估遮挡与真实图像质量。
 
-两条路线使用相同的相机质量模型，输出站位、方向、稀疏覆盖关系和未满足目标。A3 共用动态投票 / 贪心集合覆盖与冗余删除，分别统计站位和照片。相同候选下，两条路线应得到相同覆盖关系；采样密度或随机点数本身不保证质量覆盖。
+```bash
+python -B falhv2/anchor_experiments/run.py --method object
+python -B falhv2/anchor_experiments/run.py --method position --strategy uniform \
+  --output falhv2/outputs/anchor_experiment/uniform_plan.json
+```
 
-首版 A2 的物体输入为带稳定 ID 的三维中心点，依据可执行动作、视场、高度和观察距离判断预计覆盖；不要求物体尺寸或 AABB，也不计算物体像素宽高。开始前需确认相机安装位姿和有效观察距离，预计覆盖不等同于已经拍清楚或识别成功。当前 `examples/map.json` 没有物体，需另备观察测试场景。详细方案、缺口处理和公平比较规则见[研究文档第 6 节](../docs/falhv2/path_constrained_anchor_selection_v0_20261013.md#6-a2-与-a3-的两条实现路线)，待办见[交接清单](../docs/falhv2/research_roadmap_and_handoff.md)。
+默认读取独立实验地图快照和 `config` 中的机器人、相机参数。用 `--scene` 指定用户地图；`--strategy random --seed 0` 可运行随机采样，`--save-supports` 另存完整稀疏观察支持关系。默认输出 JSON 和同名 SVG，均位于被 Git 忽略的 `outputs/anchor_experiment/`。
+
+当前用户地图在点模型下，物体驱动得到 3 个站位、10 张定向照片；64 点均匀采样得到 4 个站位、10 张照片。八组场景的实验设计、缺口、计时口径、验证和取舍见[实验报告](../docs/falhv2/anchor_driver_experiment_20261014.md)。完整候选的 3 个站位已在该离散模型中确认最少，照片数尚未证明最优；不代表实际采集已经拍清全部物体。
+
+实验测试与复现：
+
+```bash
+python -B -m unittest discover -s falhv2/tests -p 'test_anchor*.py' -v
+python -B falhv2/anchor_experiments/benchmark.py
+```
+
+原始地图、A1 实现与相机配置继续由各自模块维护。研究定义见[两条实现路线](../docs/falhv2/path_constrained_anchor_selection_v0_20261013.md#6-a2-与-a3-的两条实现路线)，后续工作见[交接清单](../docs/falhv2/research_roadmap_and_handoff.md)。
 
 ## 数据约定
 
