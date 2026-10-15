@@ -164,6 +164,14 @@ python -B falhv2/anchor_experiments/run.py --method position --strategy uniform 
 
 当前用户地图在点模型下，物体驱动得到 3 个站位、10 张定向照片；64 点均匀采样得到 4 个站位、10 张照片。八组场景的实验设计、缺口、计时口径、验证和取舍见[实验报告](../docs/falhv2/anchor_driver_experiment_20261014.md)。完整候选的 3 个站位已在该离散模型中确认最少，照片数尚未证明最优；不代表实际采集已经拍清全部物体。
 
+生成三种方法的交互可视化及并排静态对比图：
+
+```bash
+python -B falhv2/anchor_experiments/visualize.py
+```
+
+浏览器打开本地 `falhv2/outputs/anchor_experiment/visualization.html`，可切换物体驱动、均匀采样和固定种子随机采样，缩放平移地图，点击物体/站位查看覆盖关系与相机投影示意，并按需叠加 A1 路径和候选票数。同名 PNG 为静态对比图。支持 `--scene`、`--robot`、`--camera`、`--seed`、`--output`，所有结果由输入实时重新计算。投影示意不是实际照片；底图中的障碍未用作相机遮挡。页面交互逻辑测试为 `node falhv2/tests/test_anchor_viewer.cjs`。
+
 实验测试与复现：
 
 ```bash
