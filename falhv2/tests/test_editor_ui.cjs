@@ -3,7 +3,7 @@ const fs = require('node:fs');
 const path = require('node:path');
 const vm = require('node:vm');
 
-const html = fs.readFileSync(path.join(__dirname, '..', 'editor.html'), 'utf8');
+const html = fs.readFileSync(path.join(__dirname, '..', 'map_editor.html'), 'utf8');
 const source = html.split('<script>')[1].split('</script>')[0];
 const elements = new Map();
 const fills = [];

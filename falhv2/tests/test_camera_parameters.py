@@ -94,7 +94,7 @@ class CameraParameterTests(unittest.TestCase):
     def test_cli_generates_template_and_leaves_user_default_untouched(self):
         with tempfile.TemporaryDirectory() as folder:
             output = Path(folder)/"outputs/camera.json"
-            default = Path(folder)/"config/camera.json"
+            default = Path(folder)/"data/camera.json"
             default.parent.mkdir()
             default.write_text('{"manually_measured_mount": true}\n')
             with patch.object(camera, "DEFAULT_CONFIG", default), patch.object(camera, "load_sdk", return_value=sdk([device()])), contextlib.redirect_stdout(io.StringIO()):

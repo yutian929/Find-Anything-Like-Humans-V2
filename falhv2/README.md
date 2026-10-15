@@ -13,7 +13,22 @@ conda activate test
 cd /home/hri/yutian/Find-Anything-Like-Humans-V2
 ```
 
-下文所有命令均在仓库根目录执行，使用激活环境中的 `python`。地图编辑器仅依赖 Python 标准库；A1 使用 `test` 环境中的 NumPy、SciPy 和 OpenCV。编辑器前端测试另外需要 Node.js。
+下文所有命令均在仓库根目录执行，使用激活环境中的 `python`。地图编辑器仅依赖 Python 标准库；A1 与锚点规划使用 `test` 环境中的 NumPy、SciPy 和 OpenCV；离线规划不需要连接相机或安装 RealSense SDK。编辑器前端测试另外需要 Node.js。
+
+## 输入与输出管理
+
+所有入口通过 [config.py](config.py) 统一管理默认路径，路径相对 `falhv2` 目录解析，不受启动工作目录影响。
+
+| 目录 / 文件 | 用途与维护方式 |
+|---|---|
+| `data/map.json` | 当前地图和物体点，来自编辑器导出；持久输入 |
+| `data/robot.json` | 当前机器人的实测尺寸和安全距离；持久输入 |
+| `data/camera.d435i.json` | 当前相机内参与人工补全的安装、观察距离；持久输入 |
+| `outputs/` | 可删除的生成结果，运行脚本会重建；不作为默认输入来源 |
+
+地图编辑器通过浏览器下载 `map.json`，请自行将它放到 `data/map.json`。相机读取脚本生成 `outputs/camera.d435i.json` 草稿，补全人工项后自行复制到 data；复制完成后草稿可删除。规划器始终读取 data 中的正式输入，不会读取草稿或自动选择其他地图。配置缺失时明确报错；也可使用 `--scene`、`--robot`、`--camera` 显式指定其他文件。
+
+地图、机器人和相机 JSON 已集中到 `data/`，内容保持不变。以后更换输入文件，只需修改 `config.py` 中的 `MAP_PATH`、`ROBOT_PATH`、`CAMERA_PATH`；也可临时通过命令行覆盖。旧 outputs 中的地图不参与默认输入选择。
 
 ## 任务与进度
 
@@ -21,9 +36,9 @@ cd /home/hri/yutian/Find-Anything-Like-Humans-V2
 |---|---|---|
 | 地图编辑器 | 绘制栅格地图、放置无类别物体中心点、导入导出 JSON | 已完成，见[地图编辑器](#地图编辑器) |
 | A1 区域与路线规划 | 根据地图、机器人尺寸和安全距离求全部可通行区域及区域内路线 | 已实现 EDT + OpenCV 连通域 + 分区扫描，见[A1](#a1区域与路线规划) |
-| A2 观察模型 | 共用质量判断；比较物体反向支持区域与路径位置采样 | 下一步，方案已确定，尚未实现 |
-| A3 锚点选择 | 物体投票、贪心集合覆盖、冗余删除与拍摄方向选择 | 待实现 |
-| A4 离线验证 | 精确解核对、基线比较、质量与成本评估 | 待实现 |
+| A2 观察模型 | 物体驱动反向查询，点视场与距离覆盖 | 已接入 `main`，见[锚点规划](#a2a3物体驱动锚点规划) |
+| A3 锚点选择 | 动态投票、冗余删除与拍摄方向选择 | 已接入 `anchor_selector.py`，待现场验证 |
+| A4 离线验证 | 精确解核对、基线比较、质量与成本评估 | 已完成首轮八场景实验，见[报告](../docs/falhv2/anchor_driver_experiment_20261014.md) |
 | B 静态真实实验 | 按锚点采集、检查实际图像质量、检索与找物 | 待实现 |
 | C 动态维护 | 物体变化后更新分布、复核锚点、刷新记忆 | 待实现 |
 | D 长期评估 | 多轮变化、消融实验与失败分析 | 待实现 |
@@ -33,19 +48,23 @@ cd /home/hri/yutian/Find-Anything-Like-Humans-V2
 ```text
 falhv2/
 ├── README.md
-├── editor.html                  # 地图编辑器页面
+├── map_editor.html                  # 地图编辑器页面
 ├── map_editor.py                # 地图编辑器启动入口
 ├── path_planner.py              # A1：可通行区域与区域内路线
-├── camera_parameters.py    # D435i 相机标定导出
-├── config/
-│   ├── robot.example.json       # 机器人尺寸与安全距离示例
+├── camera_parameters.py         # D435i 相机标定导出
+├── anchor_selector.py            # A2/A3：物体驱动锚点与拍摄动作
+├── anchor_selector.html           # 离线交互展示模板
+├── config.py                    # 地图、机器人、相机及输出文件路径
+├── data/
+│   ├── map.json                 # 当前地图和物体分布
+│   ├── robot.json               # 当前机器人尺寸与安全距离
 │   └── camera.d435i.json        # 当前 D435i 的默认 RGB 内参
-├── examples/
-│   └── map.json                 # 受版本控制的最小示例地图
 ├── outputs/                     # 本地产物，Git 忽略
-│   ├── map.json                 # 用户在编辑器保存的本地地图
 │   ├── path_plan.json           # A1 区域与路线结果
-│   └── path_diagnostic.svg      # A1 诊断图
+│   ├── path_diagnostic.svg      # A1 诊断图
+│   ├── anchor_plan.json         # 锚点、拍摄方向与覆盖缺口
+│   ├── anchor_plan.html         # 可直接打开的离线交互页面
+│   └── anchor_plan.svg          # 静态诊断图
 └── tests/                       # 编辑器与规划器测试
 ```
 
@@ -63,7 +82,7 @@ python falhv2/map_editor.py
 2. 拖动画障碍或未知区域，用擦除工具恢复空闲格。
 3. 设置物体高度，选择“放置物体”并点击地图。
 4. 选择已有物体后可修改其高度，也可撤销、删除物体。
-5. 保存地图为 JSON，或打开已有地图继续编辑。
+5. 保存地图为 JSON，将导出的 `map.json` 放入 `falhv2/data/`；打开已有地图时也从该目录选择。
 
 大地图可使用 **1–64 格宽的方形笔刷**连续涂抹，界面同时显示对应的米制宽度。也可选择**矩形填充**，从一个角拖到另一个角，预览后松开鼠标完成整块填充。两种方式都适用于障碍、未知区域和擦除，每次拖动均可一次撤销。例如 0.05 米/格时，10 格笔刷宽度为 0.5 米。
 
@@ -79,14 +98,14 @@ python falhv2/map_editor.py
 python -B falhv2/path_planner.py
 ```
 
-默认优先读取本地 `outputs/map.json`；不存在时使用仓库自带的 `examples/map.json`。`outputs/` 和备份目录 `outputs_/` 不纳入版本控制；测试固定使用 `examples/`，不依赖本地运行产物。
+默认读取 `data/map.json` 和 `data/robot.json`，缺失时报错。需要使用其他地图时通过 `--scene` 显式指定。`outputs/` 和备份目录 `outputs_/` 不纳入版本控制；删除 outputs 不影响正式输入。
 
 也可显式指定输入和输出：
 
 ```bash
 python -B falhv2/path_planner.py \
-  --scene falhv2/outputs/map.json \
-  --robot falhv2/config/robot.example.json \
+  --scene falhv2/data/map.json \
+  --robot falhv2/data/robot.json \
   --output falhv2/outputs/path_plan.json \
   --svg falhv2/outputs/path_diagnostic.svg
 ```
@@ -123,11 +142,11 @@ python -B falhv2/camera_parameters.py
 
 默认读取 RGB **1280×720、BGR8、30 FPS** 对应的内参，保存到本地 `falhv2/outputs/camera.d435i.json`。脚本查询设备标定，不启动视频采集；后续实际图像应使用相同的分辨率及几何处理。
 
-[`config/camera.d435i.json`](config/camera.d435i.json) 使用与读取结果完全相同的精简结构，作为后续 A2 的默认输入。当前已复制一份真机内参，待填项仍为 `null`。交给其他用户时，按以下步骤准备自己的配置：
+[`data/camera.d435i.json`](data/camera.d435i.json) 使用与读取结果完全相同的精简结构，作为后续 A2 的默认输入。当前已复制一份真机内参，并已填写安装位置 `[0.23, 0, 0.5]` m、零安装角及 0.2–3 m 观察距离；实际采集效果待验证。新用户读取的文件仍用 `null` 标记人工项。交给其他用户时，按以下步骤准备自己的配置：
 
 1. 连接相机，运行脚本生成 `outputs/camera.d435i.json`。
 2. 人工填写该文件中 `mount` 与 `observation_quality` 的所有 `null`，含义见下表。
-3. 将补全后的文件自行复制到 `config/camera.d435i.json`，供离线规划使用。重复读取只更新指定输出文件，脚本不自动替换默认配置。
+3. 将补全后的文件自行复制到 `data/camera.d435i.json`，供离线规划使用。重复读取只更新指定输出文件，脚本不自动替换默认配置。
 
 | 字段 | 来源或填写方式 |
 |---|---|
@@ -150,13 +169,55 @@ python -B falhv2/camera_parameters.py --list-modes
 
 裁切、缩放或去畸变后，应使用对应的新内参。畸变模型与系数保持 SDK 返回值。标定含义参考 [RealSense SDK API](https://github.com/realsenseai/librealsense/blob/master/examples/sensor-control/api_how_to.h)及[投影说明](https://github.com/realsenseai/librealsense/wiki/Projection-in-RealSense-SDK-2.0)。
 
-## A2 与 A3 的实现计划
+## A2/A3：物体驱动锚点规划
 
-A1 路径固定后，A2 比较两种候选生成方式：**物体驱动**，从每个物体反推合格观察位置和方向，再与路径相交；**位置驱动**，沿路径均匀或随机采样后，检查每个观察能够覆盖哪些物体。首版优先实现前者，以后者作对照。
+在仓库根目录运行下一步入口：
 
-两条路线使用相同的相机质量模型，输出站位、方向、稀疏覆盖关系和未满足目标。A3 共用动态投票 / 贪心集合覆盖与冗余删除，分别统计站位和照片。相同候选下，两条路线应得到相同覆盖关系；采样密度或随机点数本身不保证质量覆盖。
+```bash
+python -B falhv2/anchor_selector.py
+```
 
-首版 A2 的物体输入为带稳定 ID 的三维中心点，依据可执行动作、视场、高度和观察距离判断预计覆盖；不要求物体尺寸或 AABB，也不计算物体像素宽高。开始前需确认相机安装位姿和有效观察距离，预计覆盖不等同于已经拍清楚或识别成功。当前 `examples/map.json` 没有物体，需另备观察测试场景。详细方案、缺口处理和公平比较规则见[研究文档第 6 节](../docs/falhv2/path_constrained_anchor_selection_v0_20261013.md#6-a2-与-a3-的两条实现路线)，待办见[交接清单](../docs/falhv2/research_roadmap_and_handoff.md)。
+默认输入与 A1 一致：读取 `data/map.json`、`data/robot.json`，相机读取 `data/camera.d435i.json`。脚本内部调用 A1 重新生成匹配当前地图与机器人配置的路线，不直接读取旧的 `path_plan.json`，因此也可独立运行。无需机器人起始位姿、起终点或指定锚点数量。
+
+也可显式指定编辑器保存的地图和配置：
+
+```bash
+python -B falhv2/anchor_selector.py \
+  --scene falhv2/data/map.json \
+  --robot falhv2/data/robot.json \
+  --camera falhv2/data/camera.d435i.json \
+  --output falhv2/outputs/anchor_plan.json \
+  --save-supports
+```
+
+在 `falhv2` 目录内可以直接运行 `python -B anchor_selector.py`。`--yaw-step-deg` 设置底盘拍摄方向间隔，默认 30°，即每站检查 12 个方向。相机安装高度和俯仰固定，底盘可原地转向。
+
+### 处理流程
+
+1. A1 生成各连通区域路线；合并重复经过的格中心，保留区域和访问索引。
+2. 对每个物体用 KDTree 查询附近路径站位，保守查询半径为最远观察距离加相机水平安装偏移。
+3. 逐方向变换到相机坐标，用正深度、图像边界和三维欧氏距离生成稀疏二值覆盖关系 `q(i,θ,o)`。当前没有物体尺寸或 AABB，不计算像素宽高。
+4. 每个未覆盖物体对每站最多投一票，动态贪心选站；删除冗余站位，再选择和删除冗余拍摄方向。
+5. 重新检查每个最终拍摄动作，输出锚点计划和可视化。
+
+### 输出与查看
+
+| 文件 | 内容 |
+|---|---|
+| `outputs/anchor_plan.json` | 站位、区域、路径首次访问索引、底盘偏航（弧度）、每张照片覆盖的物体 ID、缺口、配置与耗时 |
+| `outputs/anchor_plan.html` | 自包含离线交互页面；可缩放、平移、点选物体和站位、查看投影、叠加路线与票数，并导出当前地图 PNG |
+| `outputs/anchor_plan.svg` | 静态地图、候选票数、锚点与拍摄方向 |
+| `outputs/anchor_plan.supports.json` | 加 `--save-supports` 时导出 A2 完整稀疏二值关系；方向键是 `yaws_rad` 的索引，未列出的项为 0 |
+
+修改 `--output` 后，其余文件使用相同文件名主干。直接双击生成的 HTML 即可离线查看或转发，无需启动服务；`anchor_selector.html` 是模板，查看结果应打开 outputs 中的页面。
+
+全部输入目标进入统计：全部有支持返回 `complete`；有缺口返回 `partial` 并列出原始物体 ID；空目标返回 `empty_targets`、零锚点和 `null` 覆盖率。缺口指当前离散站位与方向无支持，未证明连续空间无解。无可通行格、未补全相机参数或非零畸变系数会明确报错。
+
+历史实验地图在当时配置下得到 **3 个站位、10 张定向照片，28/28 点覆盖**；该快照保留在实验分支，主线直接使用编辑器保存的地图。选择采用启发式，脚本不承诺全局最少站位或照片。覆盖仅表示中心点满足视场与距离，没有评估三维遮挡和实际识别；二维导航障碍不直接作为相机遮挡。区域间路线未连接，锚点顺序沿区域内 A1 首次访问顺序排列，尚未缩短完整行驶路线。
+
+### 选型与后续
+
+`main` 仅保留物体驱动实现，不依赖 experiments。位置驱动和多方法比较可在 `experiment/anchor-candidate-drivers` 分支继续复现。历史[实验报告](../docs/falhv2/anchor_driver_experiment_20261014.md)及数据汇总保留为选型依据。下一步是现场采集验证、补充遮挡模型与改进照片选择，见[交接清单](../docs/falhv2/research_roadmap_and_handoff.md)。
 
 ## 数据约定
 
@@ -174,9 +235,10 @@ A1 路径固定后，A2 比较两种候选生成方式：**物体驱动**，从�
 ```bash
 python -B -m unittest discover -s falhv2/tests -v
 node falhv2/tests/test_editor_ui.cjs
+node falhv2/tests/test_anchor_viewer.cjs
 ```
 
-Python 测试覆盖页面服务、坐标转换、足迹约束、连通区域及路线合法性；Node.js 测试覆盖编辑器交互和导入导出逻辑。
+Python 测试覆盖页面服务、路线合法性、相机几何、反向筛选与穷举一致性、投票、覆盖缺口和正式 CLI 导出；Node.js 测试覆盖编辑器与锚点查看页面交互。仅运行锚点测试可使用 `python -B -m unittest discover -s falhv2/tests -p 'test_anchor*.py' -v`。
 
 ## 后续模块维护
 

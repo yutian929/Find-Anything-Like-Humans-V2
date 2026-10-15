@@ -26,6 +26,11 @@ class EditorServerTests(unittest.TestCase):
         self.assertEqual(response["headers"]["Cache-Control"], "no-store")
         self.assertIn(b'canvas id="canvas"', body)
 
+    def test_named_editor_page(self):
+        response, body = self.request("/map_editor.html")
+        self.assertEqual(response["status"], 200)
+        self.assertIn(b'canvas id="canvas"', body)
+
     def test_unknown_route(self):
         response, body = self.request("/missing")
         self.assertEqual(response["status"], 404)

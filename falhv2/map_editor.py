@@ -2,14 +2,17 @@
 
 import argparse
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
-from pathlib import Path
+try:
+    from . import config as settings
+except ImportError:
+    import config as settings
 
-PAGE = Path(__file__).with_name("editor.html")
+PAGE = settings.EDITOR_PAGE
 
 
 class EditorHandler(BaseHTTPRequestHandler):
     def do_GET(self):
-        if self.path not in ("/", "/editor.html"):
+        if self.path not in ("/", "/map_editor.html"):
             self.send_error(404)
             return
         payload = PAGE.read_bytes()
@@ -26,6 +29,7 @@ def main():
     parser.add_argument("--port", type=int, default=8765)
     args = parser.parse_args()
     server = ThreadingHTTPServer(("127.0.0.1", args.port), EditorHandler)
+    print(f"导出地图后请保存到：{settings.MAP_PATH}", flush=True)
     print(f"打开浏览器：http://127.0.0.1:{args.port}", flush=True)
     try:
         server.serve_forever()

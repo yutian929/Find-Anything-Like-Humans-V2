@@ -363,7 +363,7 @@ element('save').onclick = () => {
     link.download = 'map.json';
     link.click();
     setTimeout(() => URL.revokeObjectURL(url), 1000);
-    showStatus('地图已导出。');
+    showStatus('地图已导出，请将 map.json 放入 falhv2/data/，作为规划输入。');
 };
 function normalizeMap(value) {
     const grid = value.grid;

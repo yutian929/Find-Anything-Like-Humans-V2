@@ -1,4 +1,3 @@
-import json
 import math
 import sys
 import unittest
@@ -66,11 +65,12 @@ class PathPlannerTests(unittest.TestCase):
             plan(scene(["..", ".."]), robot(width=-0.1))
         self.assertEqual(caught.exception.code, "invalid_robot")
 
-    def test_example_map_plan_and_svg(self):
-        root = Path(__file__).resolve().parents[1]
-        data = json.loads((root / "examples/map.json").read_text())
+    def test_map_plan_and_svg(self):
+        # Fixed test input stays independent of user maps and robot settings.
+        data = scene(["............", "............", "....##......",
+                      "....##......", "............", "............"])
         data.pop("objects")  # A1 needs only the grid, even for an editor export.
-        config = json.loads((root / "config/robot.example.json").read_text())
+        config = robot()
         result = plan(data, config)
         self.assertEqual(result["status"], "complete")
         self.assertEqual(result["statistics"]["visited_traversable_cells"],

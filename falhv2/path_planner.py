@@ -22,6 +22,13 @@ import cv2
 import numpy as np
 from scipy.ndimage import distance_transform_edt
 
+try:
+    from . import config as settings
+    from .config import read_input
+except ImportError:
+    import config as settings
+    from config import read_input
+
 
 Cell = tuple[int, int]  # (row from top, column from left)
 NEIGHBORS = ((-1, 0), (0, 1), (1, 0), (0, -1))
@@ -447,19 +454,16 @@ def diagnostic_svg(scene: dict[str, Any], result: dict[str, Any]) -> str:
 
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
-    local_map = Path(__file__).parent / "outputs/map.json"
-    default_map = local_map if local_map.is_file() else Path(__file__).parent / "examples/map.json"
-    parser.add_argument("--scene", type=Path, default=default_map)
-    parser.add_argument("--robot", type=Path,
-                        default=Path(__file__).parent / "config/robot.example.json")
-    parser.add_argument("--output", type=Path, default=Path(__file__).parent / "outputs/path_plan.json")
-    parser.add_argument("--svg", type=Path, default=Path(__file__).parent / "outputs/path_diagnostic.svg")
+    parser.add_argument('--scene', type=Path, default=settings.MAP_PATH)
+    parser.add_argument('--robot', type=Path, default=settings.ROBOT_PATH)
+    parser.add_argument("--output", type=Path, default=settings.PATH_PLAN_PATH)
+    parser.add_argument("--svg", type=Path, default=settings.PATH_SVG_PATH)
     args = parser.parse_args()
     try:
-        scene = json.loads(args.scene.read_text(encoding="utf-8"))
-        config = json.loads(args.robot.read_text(encoding="utf-8"))
+        scene = read_input(args.scene)
+        config = read_input(args.robot)
         result = plan(scene, config)
-    except (OSError, json.JSONDecodeError, PlanningError) as exc:
+    except (OSError, ValueError) as exc:
         code = exc.code if isinstance(exc, PlanningError) else "invalid_input"
         parser.exit(2, f"规划失败 [{code}]: {exc}\n")
     args.output.parent.mkdir(parents=True, exist_ok=True)

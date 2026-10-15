@@ -1,7 +1,7 @@
 """Read RealSense calibration directly with the pyrealsense2 Python SDK.
 
 Parameters go to outputs/. Fill the null fields, then copy the JSON into
-config/camera.d435i.json for offline use. Reads calibration without starting video.
+data/camera.d435i.json for offline use. Reads calibration without starting video.
 """
 from __future__ import annotations
 
@@ -10,8 +10,12 @@ import json
 import math
 from pathlib import Path
 
-ROOT = Path(__file__).resolve().parent
-DEFAULT_CONFIG = ROOT / "config/camera.d435i.json"
+try:
+    from . import config as settings
+except ImportError:
+    import config as settings
+
+DEFAULT_CONFIG = settings.CAMERA_PATH
 
 
 class CameraReadError(ValueError):
@@ -113,7 +117,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--format", help="默认 color=BGR8，depth=Z16")
     parser.add_argument("--serial", help="多台相机时明确选择设备")
     parser.add_argument("--list-modes", action="store_true", help="列出分辨率、格式与帧率，不写文件")
-    parser.add_argument("--output", type=Path, default=ROOT / "outputs/camera.d435i.json")
+    parser.add_argument("--output", type=Path, default=settings.CAMERA_EXPORT_PATH)
     args = parser.parse_args(argv)
     if min(args.width, args.height, args.fps) <= 0:
         parser.error("宽高和 fps 必须为正整数")
