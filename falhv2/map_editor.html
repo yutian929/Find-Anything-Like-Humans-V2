@@ -36,25 +36,33 @@ button{background:#f8fafc;cursor:pointer;color:#24364b}button:hover{background:#
 <button data-tool="unknown">未知区域</button><button data-tool="object">放置物体</button>
 <button data-tool="select">选择物体</button><button data-tool="remove">删除物体</button>
 </div>
-<p class="hint">按住鼠标拖动画格子。物体可以放在空闲区域或障碍物上方。</p>
+<p class="hint">按住鼠标拖动画格子。物体可以放在空闲区域或障碍物上方。Box 用于视觉遮挡；阻挡底盘的范围仍需用“画障碍”标出。</p>
 <div class="tools" id="strokeMode"><button data-shape="brush" class="active">笔刷</button><button data-shape="rectangle">矩形填充</button></div>
 <label>笔刷宽度 / 格<input id="brushSize" type="number" min="1" max="64" step="1" value="1"></label>
 <p class="hint" id="brushHint"></p>
 <p class="hint">先选障碍、未知或擦除，再选择笔刷或矩形填充。矩形拖动时预览，松开后填充；一次拖动可一次撤销。</p>
-<h2>物体高度</h2>
-<label>高度 z / 米<input id="objectHeight" type="number" min="0" step="0.05" value="0.85"></label>
-<p class="hint" id="heightHint">先设置高度，再用“放置物体”点击地图。修改高度只影响之后放置的物体。</p>
+<h2>物体 AABB</h2>
+<label>中心高度 z / 米<input id="objectHeight" type="number" min="0" step="0.05" value="0.85"></label>
+<div class="fields" style="margin-top:9px">
+<label>X 尺寸 / 米<input id="objectSizeX" type="number" min="0.001" step="0.05" value="0.3"></label>
+<label>Y 尺寸 / 米<input id="objectSizeY" type="number" min="0.001" step="0.05" value="0.3"></label>
+<label>竖直高度 / 米<input id="objectSizeZ" type="number" min="0.001" step="0.05" value="0.5"></label>
+</div>
+<p class="hint" id="heightHint"></p>
+<div class="actions"><button id="applyBox">应用尺寸到所选物体</button></div>
+<canvas id="heightView" width="240" height="190" aria-label="所选物体高度侧视图"></canvas>
+<p class="hint" id="heightDetails">选择一个物体查看高度侧视图。</p>
 <div class="actions"><button id="undo">撤销最近编辑</button></div>
 <h2>场景文件</h2>
 <div class="actions"><button id="save">保存地图</button><button id="load">打开地图</button><input id="file" type="file" accept="application/json,.json" hidden></div>
-<p class="hint">保存二维栅格和物体三维位置，无需手动编辑文件。地图原点在左下角，+x 向右，+y 向上。</p>
+<p class="hint">保存二维栅格、物体中心和 AABB 边界。尺寸沿世界坐标轴，不旋转。地图原点在左下角，+x 向右，+y 向上。</p>
 </aside>
 <section class="workspace">
 <strong id="sceneTitle">手绘地图</strong>
 <div class="actions"><button id="resetView">显示全图</button><span id="zoomLevel">100%</span></div>
 <p class="hint">滚轮缩放鼠标所在位置；按住鼠标中键或右键拖动平移；左键使用当前绘制工具。</p>
 <div class="canvas-wrap"><canvas id="canvas" width="960" height="720"></canvas></div>
-<div class="legend"><span>■ 黑色：障碍</span><span style="color:#94a3b8">■ 灰色：未知</span><span>□ 白色：空闲</span><span style="color:#d97706">● 橙色：物体</span></div>
+<div class="legend"><span>■ 黑色：障碍</span><span style="color:#94a3b8">■ 灰色：未知</span><span>□ 白色：空闲</span><span style="color:#d97706">▧ 色块：物体 XY 范围</span><span id="heightLegend"></span></div>
 <div id="status" role="status">正在初始化…</div>
 </section>
 </main>
@@ -84,12 +92,54 @@ function sync() {
     element('resolution').value = scene.grid.resolution;
     element('sceneTitle').textContent = scene.grid.rows[0].length + ' × ' + scene.grid.rows.length + ' 格 · ' + scene.grid.resolution + ' m/格 · ' + scene.objects.length + ' 个物体';
     element('heightHint').textContent = tool === 'select' && selected
-        ? '已选择 ' + selected + '，修改高度会更新这个物体。'
-        : '先设置高度，再用“放置物体”点击地图。修改高度只影响之后放置的物体。';
+        ? '已选择 ' + selected + '，修改中心高度或尺寸会更新此物体。旧点物体需应用尺寸才能补全 AABB。'
+        : '先设置中心高度和三轴尺寸，再点击地图放置。底部 = 中心高度 − 竖直高度 / 2，须不低于地面。';
     const size = Number(element('brushSize').value);
     element('brushHint').textContent = Number.isInteger(size) && size >= 1 && size <= 64
         ? `笔刷覆盖 ${size}×${size} 格，边长约 ${Number((size * scene.grid.resolution).toFixed(4))} 米。`
         : '笔刷宽度须为 1–64 的整数。';
+}
+function readBox(position) {
+    const fields = ['objectHeight', 'objectSizeX', 'objectSizeY', 'objectSizeZ'];
+    const values = fields.map(id => Number(element(id).value));
+    if (fields.some(id => String(element(id).value).trim() === '') || !values.every(Number.isFinite) ||
+        values[0] < 0 || values.slice(1).some(value => value <= 0) || values[0] - values[3]/2 < -1e-9) {
+        throw new Error('中心高度须为非负数，三轴尺寸须为正数，Box 底部不能低于地面。');
+    }
+    const center = [position[0], position[1], values[0]];
+    const size = values.slice(1);
+    return {position: center, aabb: {
+        min: center.map((v, i) => v - size[i]/2),
+        max: center.map((v, i) => v + size[i]/2),
+    }};
+}
+function topHeight(obj) { return obj.aabb ? obj.aabb.max[2] : obj.position[2]; }
+function heightColor(obj, maximum) {
+    return `hsl(${Math.round(48 - 35 * Math.min(1, topHeight(obj) / maximum))}, 78%, ${Math.round(77 - 30 * Math.min(1, topHeight(obj) / maximum))}%)`;
+}
+function drawHeight(maximum) {
+    const cv = element('heightView'), ctx = cv.getContext('2d');
+    ctx.clearRect(0, 0, cv.width, cv.height);
+    const obj = scene.objects.find(obj => obj.id === selected);
+    const ground = 163, top = 18, scale = (ground - top) / maximum;
+    ctx.font = '11px sans-serif';
+    for (let i = 0; i <= 4; i++) {
+        const h = maximum*i/4, y = ground-h*scale;
+        ctx.strokeStyle = i === 0 ? '#334155' : '#dce3eb'; ctx.lineWidth = 1;
+        ctx.beginPath();ctx.moveTo(44,y);ctx.lineTo(234,y);ctx.stroke();
+        ctx.fillStyle='#526376';ctx.fillText(h.toFixed(2), 0,y+4);
+    }
+    ctx.fillText('米',0,12);ctx.fillText('地面 z=0',148,184);
+    if (!obj) { element('heightDetails').textContent='选择一个物体查看高度侧视图；所有物体共用高度刻度。'; return; }
+    if (!obj.aabb) {
+        ctx.fillStyle='#d97706';ctx.beginPath();ctx.arc(128,ground-obj.position[2]*scale,4,0,2*Math.PI);ctx.fill();
+        element('heightDetails').textContent=obj.id+' 只有中心点，尚无体积。设置尺寸并点击“应用尺寸到所选物体”。';return;
+    }
+    const lo=obj.aabb.min[2], hi=obj.aabb.max[2];
+    ctx.fillStyle=heightColor(obj,maximum);ctx.fillRect(85,ground-hi*scale,85,(hi-lo)*scale);
+    ctx.strokeStyle='#2563eb';ctx.strokeRect(85,ground-hi*scale,85,(hi-lo)*scale);
+    ctx.fillStyle='#172f46';ctx.fillText(obj.id,90,Math.max(12,ground-hi*scale-5));
+    element('heightDetails').textContent=`底部 ${lo.toFixed(3)} m · 顶部 ${hi.toFixed(3)} m · 竖直高度 ${(hi-lo).toFixed(3)} m。侧视条宽度仅为示意。`;
 }
 function fresh() {
     const columns = Number(element('columns').value), rows = Number(element('rows').value);
@@ -153,7 +203,19 @@ function draw() {
       }
     }
     context.lineWidth = 1;
+    const maximumHeight = Math.max(1, ...scene.objects.map(topHeight));
+    element('heightLegend').textContent = `浅黄→深橙：顶部高度 0～${maximumHeight.toFixed(2)} m（自动刻度）`;
+    drawHeight(maximumHeight);
     for (const obj of scene.objects) {
+        if (obj.aabb) {
+            const [x, y] = toScreen([obj.aabb.min[0], obj.aabb.max[1]]);
+            const width = (obj.aabb.max[0]-obj.aabb.min[0])/scene.grid.resolution*scale;
+            const height = (obj.aabb.max[1]-obj.aabb.min[1])/scene.grid.resolution*scale;
+            context.fillStyle=heightColor(obj,maximumHeight);context.globalAlpha=.65;
+            context.fillRect(x,y,width,height);context.globalAlpha=1;
+            context.strokeStyle=obj.id===selected?'#2563eb':'#9a5b08';context.lineWidth=(obj.id===selected?3:1)/zoom;
+            context.strokeRect(x,y,width,height);
+        }
         const [left, top] = toScreen(obj.position);
         context.beginPath();
         context.arc(left, top, 7, 0, Math.PI * 2);
@@ -164,7 +226,7 @@ function draw() {
         context.stroke();
         context.font = '12px sans-serif';
         context.lineWidth = 3;
-        const label = obj.id + ' z=' + obj.position[2] + 'm';
+        const label = obj.id + (obj.aabb ? ` ${obj.aabb.min[2].toFixed(2)}～${obj.aabb.max[2].toFixed(2)} m` : ` z=${obj.position[2]} m（待补尺寸）`);
         context.strokeStyle = '#ffffff';
         context.strokeText(label, left + 9, top + 13);
         context.fillStyle = '#172f46';
@@ -225,22 +287,25 @@ function edit(event, initial) {
         lastCell = {column, row};
     } else if (initial) {
         if (tool === 'object') {
-            const height = Number(element('objectHeight').value);
-            if (!Number.isFinite(height) || height < 0 || element('objectHeight').value === '') {
-                showStatus('物体高度须为非负数。', true);
-                return;
-            }
+            let box;
+            try { box = readBox(position.map(value => Number(value.toFixed(3)))); }
+            catch (error) { showStatus(error.message, true); return; }
             let identifier = 1;
             while (scene.objects.some(obj => obj.id === 'o' + identifier)) identifier++;
-            scene.objects.push({id: 'o' + identifier, position: [...position.map(value => Number(value.toFixed(3))), height]});
+            scene.objects.push({id: 'o' + identifier, ...box});
             selected = null;
         } else {
-            const nearest = scene.objects.map(obj => ({obj, distance: Math.hypot(obj.position[0] - position[0], obj.position[1] - position[1])}))
-                .sort((first, second) => first.distance - second.distance)[0];
-            const hit = nearest && nearest.distance < scene.grid.resolution * 0.4 ? nearest.obj : null;
+            const nearest = scene.objects.map(obj => ({obj, distance: Math.hypot(obj.position[0] - position[0], obj.position[1] - position[1]),
+                inside: obj.aabb && position[0]>=obj.aabb.min[0] && position[0]<=obj.aabb.max[0] && position[1]>=obj.aabb.min[1] && position[1]<=obj.aabb.max[1]}))
+                .filter(item=>item.inside || item.distance < scene.grid.resolution * .4)
+                .sort((a,b)=>a.distance-b.distance)[0];
+            const hit = nearest ? nearest.obj : null;
             if (tool === 'remove' && hit) scene.objects = scene.objects.filter(obj => obj.id !== hit.id);
             selected = tool === 'select' && hit ? hit.id : null;
-            if (selected) element('objectHeight').value = hit.position[2];
+            if (selected) {
+                element('objectHeight').value = hit.position[2];
+                if (hit.aabb) ['objectSizeX','objectSizeY','objectSizeZ'].forEach((id,i)=>element(id).value=Number((hit.aabb.max[i]-hit.aabb.min[i]).toPrecision(12)));
+            }
         }
     }
     draw();
@@ -337,17 +402,18 @@ element('tools').addEventListener('click', event => {
     for (const button of element('tools').children) button.classList.toggle('active', button.dataset.tool === tool);
     draw();
 });
-element('objectHeight').onchange = () => {
-    if (tool !== 'select' || !selected) return;
-    const height = Number(element('objectHeight').value);
-    if (!Number.isFinite(height) || height < 0 || element('objectHeight').value === '') {
-        showStatus('物体高度须为非负数。', true);
-        return;
-    }
-    remember();
-    scene.objects.find(obj => obj.id === selected).position[2] = height;
-    draw();
-};
+function applyBox() {
+    if (tool !== 'select' || !selected) { showStatus('请先用“选择物体”选中一个物体。', true); return; }
+    const obj=scene.objects.find(obj=>obj.id===selected);
+    let box;
+    try { box=readBox(obj.position); }
+    catch(error) { showStatus(error.message,true);return; }
+    remember();Object.assign(obj,box);draw();showStatus('已更新 '+obj.id+' 的 AABB。');
+}
+for (const id of ['objectHeight','objectSizeX','objectSizeY','objectSizeZ']) {
+    element(id).onchange=()=>{ if(tool==='select' && selected) applyBox(); };
+}
+element('applyBox').onclick=applyBox;
 element('new').onclick = fresh;
 element('undo').onclick = () => {
     if (!undoStack.length) return;
@@ -385,7 +451,18 @@ function normalizeMap(value) {
             throw new Error('物体 ID 必须唯一，位置须位于地图内，高度须为非负数。');
         }
         identifiers.add(obj.id);
-        return {id: obj.id, position: [...obj.position]};
+        const result = {id: obj.id, position: [...obj.position]};
+        if (Object.prototype.hasOwnProperty.call(obj, 'aabb')) {
+            const box=obj.aabb;
+            if (!box || !Array.isArray(box.min) || !Array.isArray(box.max) || box.min.length!==3 || box.max.length!==3 ||
+                !box.min.every(Number.isFinite) || !box.max.every(Number.isFinite) || box.min[2]<-1e-9 ||
+                box.min.some((v,i)=>v>=box.max[i]) ||
+                obj.position.some((v,i)=>Math.abs(v-(box.min[i]+box.max[i])/2)>1e-6)) {
+                throw new Error('AABB 需要有效的 min/max 三维边界，尺寸为正、底部不低于地面，position 必须为 Box 中心。');
+            }
+            result.aabb={min:[...box.min],max:[...box.max]};
+        }
+        return result;
     });
     return {name: typeof value.name === 'string' ? value.name : 'hand_drawn_map',
         grid: {resolution: grid.resolution, origin: [...grid.origin], rows: [...grid.rows]}, objects};
@@ -400,7 +477,8 @@ element('file').onchange = async event => {
         scene = loaded;
         selected = null;
         resetView();
-        showStatus('地图已打开，可以继续绘制。');
+        const missing=scene.objects.filter(obj=>!obj.aabb).length;
+        showStatus('地图已打开，可以继续绘制。'+(missing?` ${missing} 个旧物体仅有中心点，请逐个补全 AABB。`:''));
     } catch (error) {
         showStatus('打开失败：' + error.message, true);
     } finally {

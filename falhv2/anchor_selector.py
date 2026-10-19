@@ -1,11 +1,11 @@
 """物体驱动锚点规划：安全区域 → 反向覆盖关系 → 动态投票 → 定向拍摄。
 
-默认从 data/map.json、data/robot.json 和 data/camera.d435i.json 读取输入，
-输出离线 JSON / HTML / SVG。覆盖模型仅检查三维中心点的相机视场与距离。
+默认从 data/map_aabb.json、data/robot.json 和 data/camera.d435i.json 读取输入，
+输出离线 JSON / HTML / SVG。支持旧点模型及完整 AABB 地图的部分遮挡、入镜比例和可见像素判断。
 """
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 import math
 from typing import Sequence
 
@@ -22,10 +22,12 @@ from scipy.spatial import cKDTree
 
 try:
     from .regions_extractor import plan as find_safe_regions, diagnostic_svg, PlanningError
+    from .observation_model import BoxObserver, validate_objects
     from . import config as settings
     from .config import read_input
 except ImportError:
     from regions_extractor import plan as find_safe_regions, diagnostic_svg, PlanningError
+    from observation_model import BoxObserver, validate_objects
     import config as settings
     from config import read_input
 
@@ -46,29 +48,14 @@ class CandidateResult:
     yaws: list[float]
     supports: dict[int, dict[int, set[str]]]
     stats: dict
+    qualities: dict[int, dict[int, dict[str, float]]] = field(default_factory=dict)
+    diagnostics: dict = field(default_factory=dict)
 
 
 def yaw_grid(step_deg: float = 30.0) -> list[float]:
     if not math.isfinite(step_deg) or not 0 < step_deg <= 360:
         raise ValueError("yaw step must be in (0, 360] degrees")
     return np.deg2rad(np.arange(0.0, 360.0, step_deg)).tolist()
-
-
-def validate_objects(objects: Sequence[dict]) -> list[dict]:
-    result, ids = [], set()
-    for obj in objects:
-        identifier = obj.get("id")
-        if not isinstance(identifier, str) or not identifier or identifier in ids:
-            raise ValueError("Objects require unique nonempty string IDs")
-        try:
-            point = tuple(float(v) for v in obj["position"])
-        except (KeyError, TypeError, ValueError) as exc:
-            raise ValueError(f"Invalid point for object {identifier}") from exc
-        if len(point) != 3 or not all(math.isfinite(v) for v in point):
-            raise ValueError(f"Object {identifier} requires a finite 3D point")
-        ids.add(identifier)
-        result.append({"id": identifier, "position": list(point)})
-    return result
 
 
 def stations_from_regions(safe_regions: dict) -> list[Station]:
@@ -182,6 +169,10 @@ def generate_candidates(
         raise ValueError("Selected station index is not in the station pool")
     positions = np.asarray([by_index[index].position for index in selected], dtype=float).reshape(-1, 2)
     supports: dict[int, dict[int, set[str]]] = {}
+    qualities: dict[int, dict[int, dict[str, float]]] = {}
+    observer = BoxObserver(camera, objects) if objects and 'aabb' in objects[0] else None
+    rejection_counts = Counter()
+    diagnostics = {}
     screened_pairs = 0
     exact_tests = 0
     n_yaws = len(yaws)
@@ -189,11 +180,11 @@ def generate_candidates(
     yaw_array = np.asarray(yaws, dtype=float)
     # Triangle inequality: |target.xy-base.xy| <= max_range + |mount.xy|.
     # Tiny outward slack preserves boundary candidates under float arithmetic;
-    # the shared exact camera predicate still makes the final decision.
+    # Range is defined to the object center in both observation models.
     radius = camera.max_distance + camera.offset_xy_norm + 1e-7
     if selected and objects:
         tree = cKDTree(positions)
-        for obj in objects:
+        for object_index, obj in enumerate(objects):
             point = np.asarray(obj["position"], dtype=float)
             if point.shape != (3,) or not np.all(np.isfinite(point)):
                 raise ValueError("Object positions must be finite 3D points")
@@ -203,29 +194,48 @@ def generate_candidates(
                 local = nearby[start : start + chunk_size]
                 base = np.repeat(positions[local], n_yaws, axis=0)
                 headings = np.tile(yaw_array, len(local))
-                visible = np.asarray(camera.visible(base, headings, point), dtype=bool).reshape(len(local), n_yaws)
+                if observer:
+                    metrics = observer.evaluate(object_index, base, headings)
+                    visible = np.asarray([row['qualified'] for row in metrics]).reshape(len(local), n_yaws)
+                    rejection_counts.update(row['reason'] for row in metrics)
+                    best_index = max(range(len(metrics)), key=lambda k: (metrics[k]['qualified'], metrics[k]['quality'], metrics[k]['visible_pixels'], -metrics[k]['center_distance_m']))
+                    metric = metrics[best_index]
+                    best_key = (metric['qualified'], metric['quality'], metric['visible_pixels'], -metric['center_distance_m'])
+                    previous = diagnostics.get(obj['id'])
+                    if previous is None or best_key > tuple(previous['rank']):
+                        diagnostics[obj['id']] = {'rank': best_key, 'position': base[best_index].tolist(),
+                            'yaw_rad': float(headings[best_index]), 'metrics': metric}
+                else:
+                    visible = np.asarray(camera.visible(base, headings, point), dtype=bool).reshape(len(local), n_yaws)
                 exact_tests += len(local) * n_yaws
                 rows, cols = np.nonzero(visible)
                 for row, col in zip(rows.tolist(), cols.tolist()):
                     index = selected[local[row]]
                     supports.setdefault(index, {}).setdefault(col, set()).add(obj["id"])
+                    if observer:
+                        qualities.setdefault(index, {}).setdefault(col, {})[obj['id']] = metrics[row*n_yaws+col]['quality']
     elapsed = perf_counter() - started
     return CandidateResult(
         station_indices=selected,
         yaws=yaws,
         supports=supports,
+        qualities=qualities,
+        diagnostics={identifier: {key: value for key, value in row.items() if key != 'rank'} for identifier, row in diagnostics.items()},
         stats={
             "elapsed_s": elapsed,
             "generation_seconds": elapsed,
-            "evaluated_point_pose_pairs": exact_tests,
-            "exact_point_pose_tests": exact_tests,
+            "evaluated_object_pose_pairs": exact_tests,
+            **({"evaluated_point_pose_pairs": exact_tests, "exact_point_pose_tests": exact_tests}
+               if observer is None else {}),
             "screened_station_object_pairs": screened_pairs,
             "total_station_object_pairs": len(selected) * len(objects),
             "station_count": len(selected),
             "yaw_count": n_yaws,
             "object_count": len(objects),
             "scope": "all declared yaws at every station in the finite reference pool",
-            "screening": "conservative XY radius, followed by shared exact visibility",
+            "screening": "center-distance XY bound, then projected AABB sampling" if observer else "conservative XY radius, followed by shared exact visibility",
+            "observation_model": "aabb_solid_sampled" if observer else "legacy_point",
+            "observation_reasons": dict(rejection_counts),
         },
     )
 
@@ -237,34 +247,47 @@ def select_anchors(candidates: CandidateResult, stations: list[Station], object_
         raise ValueError("Coverage contains unknown object IDs")
     if not set(station_sets) <= set(station_by_id):
         raise ValueError("Coverage contains unknown station IDs")
+    def action_quality(i, yaw, obj):
+        return candidates.qualities.get(i, {}).get(yaw, {}).get(obj, 1.0)
+
+    # Integer micro-units keep lazy heap updates deterministic and exact.
+    station_quality = {i: {obj: round(1_000_000*max(action_quality(i, yaw, obj)
+                            for yaw, ids in candidates.supports[i].items() if obj in ids))
+                          for obj in ids} for i, ids in station_sets.items()}
     reverse = defaultdict(set)
     for i, objects in station_sets.items():
         for obj in objects:
             reverse[obj].add(i)
     remaining = set(targets)
     votes = {i: len(objects) for i, objects in station_sets.items()}
-    heap = [(-score, i) for i, score in votes.items() if score]
+    quality_votes = {i: sum(station_quality[i].values()) for i in station_sets}
+    heap = [(-score, -quality_votes[i], i) for i, score in votes.items() if score]
     heapq.heapify(heap)
     chosen, trace = [], []
     while heap and remaining:
-        negative, i = heapq.heappop(heap)
-        if -negative != votes[i]:
+        negative, negative_quality, i = heapq.heappop(heap)
+        if -negative != votes[i] or -negative_quality != quality_votes[i]:
             continue
         new = station_sets[i] & remaining
         if not new:
             continue
         chosen.append(i)
-        trace.append({"station_index": i, "new_object_ids": sorted(new), "votes": len(new)})
+        trace.append({"station_index": i, "new_object_ids": sorted(new), "votes": len(new),
+                      "quality_sum": sum(station_quality[i][obj] for obj in new)/1_000_000})
         remaining.difference_update(new)
         for obj in new:
             for other in reverse[obj]:
                 votes[other] -= 1
+                quality_votes[other] -= station_quality[other][obj]
                 if votes[other] > 0:
-                    heapq.heappush(heap, (-votes[other], other))
+                    heapq.heappush(heap, (-votes[other], -quality_votes[other], other))
     # Keep an inclusion-minimal station cover, without moving any position.
     counts = Counter(obj for i in chosen for obj in station_sets[i])
     retained = set(chosen)
-    for i in reversed(chosen):
+    prune_order = list(reversed(chosen))
+    if candidates.qualities:
+        prune_order.sort(key=lambda i: sum(station_quality[i].values()))
+    for i in prune_order:
         if all(counts[obj] > 1 for obj in station_sets[i]):
             retained.remove(i)
             counts.subtract(station_sets[i])
@@ -274,14 +297,18 @@ def select_anchors(candidates: CandidateResult, stations: list[Station], object_
     need = set(covered)
     actions = []
     while need:
-        # Deterministic tie-break by station index (region/row/column order) and yaw index.
-        key = min(directions, key=lambda key: (-len(directions[key] & need), key))
+        # Coverage first; among ties prefer better per-object visible quality.
+        key = min(directions, key=lambda key: (-len(directions[key] & need),
+                  -sum(round(1_000_000*action_quality(*key, obj)) for obj in directions[key] & need), key))
         if not (directions[key] & need):
             raise ValueError("Direction selection lost station coverage")
         actions.append(key)
         need.difference_update(directions[key])
     counts = Counter(obj for key in actions for obj in directions[key])
-    for key in list(reversed(actions)):
+    prune_actions = list(reversed(actions))
+    if candidates.qualities:
+        prune_actions.sort(key=lambda key: sum(round(1_000_000*action_quality(*key, obj)) for obj in directions[key]))
+    for key in prune_actions:
         if all(counts[obj] > 1 for obj in directions[key]):
             actions.remove(key)
             counts.subtract(directions[key])
@@ -289,7 +316,8 @@ def select_anchors(candidates: CandidateResult, stations: list[Station], object_
     for i in sorted(retained):
         station = station_by_id[i]
         observations = [{"yaw_index": yaw, "yaw_rad": candidates.yaws[yaw],
-                         "object_ids": sorted(directions[(i, yaw)])}
+                         "object_ids": sorted(directions[(i, yaw)]),
+                         "quality_by_object": {obj: action_quality(i, yaw, obj) for obj in sorted(directions[(i, yaw)])}}
                         for si, yaw in actions if si == i]
         if observations:
             anchors.append({"station_index": i, "region_id": station.region_id,
@@ -312,8 +340,8 @@ def plan(scene, robot_config, camera_config, *, yaw_step_deg=30):
     """Select object-driven anchors directly from safe regions; no route is built.
 
     Targets are world-frame 3D centers; base positions are (x, y, 0).
-    A station may take multiple yaw-directed photos. Coverage is binary FOV/range,
-    with no occlusion or appearance model. Greedy selection is not an optimum proof.
+    A station may take multiple yaw-directed photos. AABB coverage uses sampled
+    framing/occlusion/pixel gates; point maps retain legacy FOV/range coverage.
     """
     objects = validate_objects(scene.get("objects", []))
     camera = PointCamera(camera_config)
@@ -326,23 +354,35 @@ def plan(scene, robot_config, camera_config, *, yaw_step_deg=30):
     started = perf_counter()
     selected = select_anchors(candidates, stations, [o['id'] for o in objects])
     selection = perf_counter() - started
+    observer = BoxObserver(camera, objects) if objects and 'aabb' in objects[0] else None
     # Recompute every final action independently of the sparse candidate relation.
     actual = set()
     for anchor in selected['anchors']:
         for action in anchor['observations']:
-            visible = {o['id'] for o in objects if camera.visible(
-                np.asarray([anchor['position']]), np.asarray([action['yaw_rad']]), o['position'])[0]}
+            if observer:
+                metrics = {o['id']: observer.evaluate(index, [anchor['position']], [action['yaw_rad']])[0]
+                           for index, o in enumerate(objects)}
+                visible = {identifier for identifier, row in metrics.items() if row['qualified']}
+                action['object_metrics'] = metrics
+            else:
+                visible = {o['id'] for o in objects if camera.visible(
+                    np.asarray([anchor['position']]), np.asarray([action['yaw_rad']]), o['position'])[0]}
             if visible != set(action['object_ids']):
                 raise ValueError('Final observation failed camera geometry verification')
             actual.update(visible)
     if actual != set(selected['covered_object_ids']):
         raise ValueError('Final observations failed coverage verification')
     result = {
-        'schema_version': 2, 'method': 'object_driven',
+        'schema_version': 3, 'method': 'object_driven',
         'candidate_scope': 'all_safe_cell_centers_in_all_regions',
         'station_order': 'region_id_row_column',
         'scene_name': scene.get('name', 'unnamed'),
-        'observation_scope': '3D point centers; FOV and Euclidean distance; occlusion and appearance not evaluated',
+        'observation_model': 'aabb_solid_sampled' if observer else 'legacy_point',
+        'observation_scope': ('Solid AABBs; sampled projected framing, occlusion and visible pixel area; center distance; recognition not evaluated'
+                              if observer else '3D point centers; FOV and Euclidean distance; occlusion and appearance not evaluated'),
+        'observation_settings': observer.settings.to_dict() if observer else None,
+        'object_diagnostics': candidates.diagnostics,
+        'selection_rule': 'new_qualified_objects_then_sum_of_best_visible_quality',
         'uncovered_diagnosis_scope': 'No support in the evaluated discrete station/yaw pool; not continuous-space infeasibility',
         'configuration': {'robot': robot_config, 'camera': camera_config, 'yaw_step_deg': yaw_step_deg},
         'statistics': {'safe_regions_and_station_seconds': preprocessing, 'selection_seconds': selection,
@@ -370,6 +410,12 @@ def render_svg(scene,regions,result,stations,candidates):
     for obj in scene.get('objects',[]):
         x,y=screen(obj['position']); color='#e63946' if obj['id'] in missing else '#2a9d8f'
         name=html.escape(obj['id'])
+        if 'aabb' in obj:
+            box=obj['aabb']; bx,by=screen([box['min'][0],box['max'][1]])
+            bw=(box['max'][0]-box['min'][0])/grid['resolution']*scale
+            bh=(box['max'][1]-box['min'][1])/grid['resolution']*scale
+            shapes.append(f'<rect x="{bx:.2f}" y="{by:.2f}" width="{bw:.2f}" height="{bh:.2f}" fill="{color}" fill-opacity="0.2" stroke="{color}"/>')
+            name+=f" z={box['min'][2]:.2f}–{box['max'][2]:.2f}m"
         shapes.append(f'<circle cx="{x:.2f}" cy="{y:.2f}" r="13" fill="{color}" stroke="white" stroke-width="3"/><text x="{x+15:.2f}" y="{y:.2f}" font-size="20">{name}</text>')
     for anchor in result['anchors']:
         x,y=screen(anchor['position'])
@@ -392,7 +438,8 @@ def viewer_data(scene, camera_config, result, regions, stations, candidates):
                 u,v,z,d=camera.project(np.array([anchor['position']]),np.array([action['yaw_rad']]),obj['position'])
                 projected.append({'id':obj['id'],'u':float(u[0]) if math.isfinite(u[0]) else None,
                     'v':float(v[0]) if math.isfinite(v[0]) else None,'depth_m':float(z[0]),'distance_m':float(d[0]),
-                    'qualified':obj['id'] in action['object_ids']})
+                    'qualified':obj['id'] in action['object_ids'],
+                    'metrics':action.get('object_metrics', {}).get(obj['id'])})
             actions.append({'anchor_index':anchor_index,'yaw_rad':action['yaw_rad'],
                             'object_ids':action['object_ids'],'projected':projected})
     inverse={obj['id']:[] for obj in scene.get('objects',[])}
@@ -407,13 +454,16 @@ def viewer_data(scene, camera_config, result, regions, stations, candidates):
         'generation_seconds':result['statistics']['generation_seconds']})
     return {'scene_name':scene.get('name','unnamed'),'grid':scene['grid'],'objects':scene.get('objects',[]),
     'camera':camera_config,'methods':methods,
+    'observation_model':result['observation_model'],'observation_settings':result['observation_settings'],
+    'object_diagnostics':result['object_diagnostics'],
     'stations':[[s.index,*s.position] for s in stations],
     'region_count':len(regions['regions'])}
 
 def save_supports(destination, scene, stations, candidates):
     """Export the sparse binary q(station, yaw, object); missing entries are zero."""
     relation = {
-        'schema_version': 2, 'station_order': 'region_id_row_column',
+        'schema_version': 3, 'station_order': 'region_id_row_column',
+        'qualities': candidates.qualities,
         'object_points': scene.get('objects', []), 'yaws_rad': candidates.yaws,
         'evaluated_station_indices': candidates.station_indices,
         'positive_stations': [{'index': s.index, 'region_id': s.region_id, 'cell': list(s.cell),

@@ -7,7 +7,7 @@ DATA_DIR = ROOT / 'data'
 OUTPUT_DIR = ROOT / 'outputs'
 
 # 持久输入：三个文件集中放在 data/。
-MAP_PATH = DATA_DIR / 'map.json'
+MAP_PATH = DATA_DIR / 'map_aabb.json'
 ROBOT_PATH = DATA_DIR / 'robot.json'
 CAMERA_PATH = DATA_DIR / 'camera.d435i.json'
 

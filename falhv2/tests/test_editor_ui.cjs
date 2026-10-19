@@ -83,9 +83,25 @@ async function test() {
     elements.get('undo').onclick();
     assert.deepEqual(save().objects.map(obj => obj.position[2]), [0.85, 1.5]);
 
+    const boxBefore=save().objects[0].aabb;
+    assert.ok(Math.abs(boxBefore.min[2]-.6)<1e-9);
+    assert.ok(Math.abs(boxBefore.max[2]-1.1)<1e-9);
+    useTool('select');click();
+    elements.get('objectSizeX').value='1.2';elements.get('objectSizeX').onchange();
+    const resized=save().objects[0];
+    assert.ok(Math.abs(resized.aabb.max[0]-resized.aabb.min[0]-1.2)<1e-9);
+    assert.match(elements.get('heightDetails').textContent,/底部 0.600 m.*顶部 1.100 m/);
+    assert.match(elements.get('heightLegend').textContent,/顶部高度/);
+    elements.get('objectSizeZ').value='3';elements.get('objectSizeZ').onchange();
+    assert.match(elements.get('status').textContent,/不能低于地面/);
+    assert.deepEqual(save().objects[0],resized);
+    elements.get('objectSizeZ').value='.5';
+    // Select through the footprint, beyond the former center-point hit radius.
+    useTool('select');click(210,150);
+    assert.match(elements.get('heightHint').textContent,/已选择 o1/);
     const saved = save();
     assert.deepEqual(Object.keys(saved).sort(), ['grid', 'name', 'objects']);
-    assert.deepEqual(Object.keys(saved.objects[0]).sort(), ['id', 'position']);
+    assert.deepEqual(Object.keys(saved.objects[0]).sort(), ['aabb', 'id', 'position']);
     useTool('remove');
     click();
     assert.equal(save().objects.length, 1);
@@ -97,6 +113,15 @@ async function test() {
     await elements.get('file').onchange(inputEvent(invalid));
     assert.match(elements.get('status').textContent, /打开失败/);
     assert.deepEqual(save(), saved);
+    const badBox=structuredClone(saved);badBox.objects[0].aabb.max[0]=badBox.objects[0].aabb.min[0];
+    await elements.get('file').onchange(inputEvent(badBox));
+    assert.match(elements.get('status').textContent,/打开失败/);assert.deepEqual(save(),saved);
+    const oldPoints=structuredClone(saved);oldPoints.objects.forEach(obj=>delete obj.aabb);
+    await elements.get('file').onchange(inputEvent(oldPoints));
+    assert.match(elements.get('status').textContent,/旧物体仅有中心点/);
+    assert.ok(!save().objects[0].aabb);
+    useTool('select');click();elements.get('applyBox').onclick();
+    assert.ok(save().objects[0].aabb);assert.ok(!save().objects[1].aabb);
     const legacy = {...saved, camera: {}, robot: {}, planner: {}};
     await elements.get('file').onchange(inputEvent(legacy));
     assert.deepEqual(save(), saved);

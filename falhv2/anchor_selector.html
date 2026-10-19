@@ -8,15 +8,15 @@
 </style>
 </head>
 <body>
-<header><div><h1>锚点规划可视化</h1><p id="sceneInfo"></p></div><div class="badge">三维点的视场＋距离预计覆盖<br>未评估遮挡、物体尺寸或真实识别效果</div></header>
+<header><div><h1>锚点规划可视化</h1><p id="sceneInfo"></p></div><div class="badge" id="modelInfo"></div></header>
 <div class="layout">
  <main>
  <div class="card"><div class="toolbar"><select id="method" hidden aria-label="物体驱动"></select><button id="reset">显示全图</button><button id="export">导出地图 PNG</button><label><input type="checkbox" id="votes">候选票数</label><label><input type="checkbox" id="links" checked>覆盖连线</label><label><input type="checkbox" id="names" checked>物体编号</label></div><div class="mapbox"><canvas id="map" aria-label="锚点地图"></canvas><div class="hint">滚轮缩放 · 拖动平移 · 点击物体或锚点查看详情</div></div></div>
- <div class="legend"><span><i class="swatch" style="background:#29394e"></i>导航障碍</span><span><i class="swatch" style="background:#b3bfcc"></i>未知格</span><span><i class="swatch" style="background:#dcece8"></i>安全区域</span><span><i class="swatch" style="background:#11896a"></i>物体点</span><span><i class="swatch" style="background:#c12798"></i>选中站位</span><span><i class="swatch" style="background:#ed9e27"></i>候选票数</span></div>
+ <div class="legend"><span><i class="swatch" style="background:#29394e"></i>导航障碍</span><span><i class="swatch" style="background:#b3bfcc"></i>未知格</span><span><i class="swatch" style="background:#dcece8"></i>安全区域</span><span><i class="swatch" style="background:#11896a"></i>物体 / AABB</span><span><i class="swatch" style="background:#c12798"></i>选中站位</span><span><i class="swatch" style="background:#ed9e27"></i>候选票数</span></div>
  </main>
  <aside class="side">
- <div class="card section"><h2 id="methodTitle"></h2><div class="stats"><div class="metric"><strong id="anchorsCount"></strong><span>站位</span></div><div class="metric"><strong id="photosCount"></strong><span>定向照片</span></div><div class="metric"><strong id="coverageCount"></strong><span>点覆盖</span></div></div><p class="subtle" id="methodInfo"></p><div class="choices" id="anchorChoices"></div></div>
- <div class="card section"><h2 id="detailTitle">站位与拍摄动作</h2><div id="details" class="details"></div><div class="choices" id="photoChoices"></div><p class="subtle" id="photoTitle">相机投影示意（不是实际照片）</p><canvas id="projection" class="photo" aria-label="相机坐标投影示意"></canvas><div class="subtle" id="photoInfo"></div></div>
+ <div class="card section"><h2 id="methodTitle"></h2><div class="stats"><div class="metric"><strong id="anchorsCount"></strong><span>站位</span></div><div class="metric"><strong id="photosCount"></strong><span>定向照片</span></div><div class="metric"><strong id="coverageCount"></strong><span>物体覆盖</span></div></div><p class="subtle" id="methodInfo"></p><div class="choices" id="anchorChoices"></div></div>
+ <div class="card section"><h2 id="detailTitle">站位与拍摄动作</h2><div id="details" class="details"></div><div class="choices" id="photoChoices"></div><p class="subtle" id="photoTitle">相机投影示意（不是实际照片）</p><canvas id="projection" class="photo" aria-label="相机坐标投影示意"></canvas><div class="subtle" id="photoInfo"></div><div class="subtle" id="qualityInfo" style="white-space:pre-line"></div></div>
  <div class="card section"><h2>逐物体检查</h2><div id="objectChoices" class="objects"></div><p class="subtle">点选物体可查看高度、支持它的候选位置数，以及最终哪些站位负责观察。</p></div>
  </aside>
 </div>
@@ -47,17 +47,33 @@ function draw(){const w=canvas.width/(window.devicePixelRatio||1),h=canvas.heigh
  const m=current(),support=objectId?new Set(m.inverse[objectId]||[]):null;
  if(el('votes').checked)for(const [i,count] of m.votes){if(support&&!support.has(i))continue;circle(stations.get(i),2.5,`rgba(237,158,39,${Math.min(.8,.16+.045*count)})`);}
  if(el('links').checked){if(objectId){const obj=D.objects.find(o=>o.id===objectId);for(const a of m.anchors)if(a.observations.some(o=>o.object_ids.includes(objectId)))line(a.position,obj.position,'#c12798a0',1.5);}else if(action()){const a=m.anchors[action().anchor_index];for(const id of action().object_ids){const obj=D.objects.find(o=>o.id===id);line(a.position,obj.position,'#c1279880',1.3);}}}
- for(const obj of D.objects){const missing=m.uncovered_object_ids.includes(obj.id),highlight=obj.id===objectId;circle(obj.position,highlight?8:5,missing?'#df4855':'#11896a',highlight?'#f6b229':'white');if(el('names').checked)text(obj.id,obj.position,'#17563f');}
+ for(const obj of D.objects){if(obj.aabb){const a=point([obj.aabb.min[0],obj.aabb.max[1]]),b=point([obj.aabb.max[0],obj.aabb.min[1]]);ctx.fillStyle='#ed9e2730';ctx.fillRect(a[0],a[1],b[0]-a[0],b[1]-a[1]);ctx.strokeStyle=obj.id===objectId?'#f6b229':'#a7762b';ctx.strokeRect(a[0],a[1],b[0]-a[0],b[1]-a[1]);}const missing=m.uncovered_object_ids.includes(obj.id),highlight=obj.id===objectId;circle(obj.position,highlight?8:5,missing?'#df4855':'#11896a',highlight?'#f6b229':'white');if(el('names').checked)text(obj.id+(obj.aabb?` ${obj.aabb.min[2].toFixed(2)}～${obj.aabb.max[2].toFixed(2)}m`:''),obj.position,'#17563f');}
  m.anchors.forEach((a,i)=>{const [x,y]=point(a.position);ctx.save();ctx.translate(x,y);ctx.rotate(Math.PI/4);ctx.fillStyle=i===anchorIndex?'#c12798':'#983a84';ctx.fillRect(-6,-6,12,12);ctx.strokeStyle='white';ctx.strokeRect(-6,-6,12,12);ctx.restore();for(const photo of a.observations)arrow(a.position,photo.yaw_rad,i===anchorIndex?'#c12798':'#a04b8a80');text('A'+(i+1),a.position,'#a60075');});}
-function renderProjection(){const dpr=window.devicePixelRatio||1,w=projection.clientWidth,h=projection.clientHeight;projection.width=w*dpr;projection.height=h*dpr;px.setTransform(dpr,0,0,dpr,0,0);px.fillStyle='#f2f6fa';px.fillRect(0,0,w,h);const a=action();if(!a){el('photoInfo').textContent='暂无拍摄动作';return;}const c=D.camera.camera;px.strokeStyle='#d0dce8';px.setLineDash([3,3]);px.beginPath();px.moveTo(w/2,0);px.lineTo(w/2,h);px.moveTo(0,h/2);px.lineTo(w,h/2);px.stroke();px.setLineDash([]);let count=0;for(const p of a.projected){if(p.depth_m<=0||p.u===null||p.v===null||p.u<0||p.u>c.width-1||p.v<0||p.v>c.height-1)continue;const x=p.u/c.width*w,y=p.v/c.height*h;px.beginPath();px.arc(x,y,p.id===objectId?6:4,0,Math.PI*2);px.fillStyle=p.qualified?'#11896a':'#df4855';px.fill();px.font='10px system-ui';px.fillText(p.id,x+6,y-3);if(p.qualified)count++;}el('photoInfo').textContent=`绿色：满足距离与视场；红色：入镜但距离不合格。此方向覆盖 ${a.object_ids.length} 个物体。`;}
+const reasonText={qualified:'合格',in_frame_fraction:'入镜不足',visible_fraction:'遮挡过多',visible_pixels:'可见像素不足',distance:'距离不合格',out_of_frame:'未入镜',camera_inside_geometry:'相机位于物体内',behind_or_crossing_camera_plane:'目标在相机后方或跨越相机平面'};
+function metricText(id,m){return `${id}：入镜 ${(m.in_frame_fraction*100).toFixed(1)}% · 未遮挡 ${(m.visible_fraction*100).toFixed(1)}% · 可见 ${Math.round(m.visible_pixels)} px² · ${reasonText[m.reason]||m.reason}${m.occluder_ids.length?' · 遮挡物 '+m.occluder_ids.join('、'):''}`;}
+function renderProjection(){
+ const dpr=window.devicePixelRatio||1,w=projection.clientWidth,h=projection.clientHeight;projection.width=w*dpr;projection.height=h*dpr;px.setTransform(dpr,0,0,dpr,0,0);px.fillStyle='#f2f6fa';px.fillRect(0,0,w,h);
+ const a=action();el('qualityInfo').textContent='';if(!a){el('photoInfo').textContent='暂无拍摄动作';return;}
+ const c=D.camera.camera;px.strokeStyle='#d0dce8';px.setLineDash([3,3]);px.beginPath();px.moveTo(w/2,0);px.lineTo(w/2,h);px.moveTo(0,h/2);px.lineTo(w,h/2);px.stroke();px.setLineDash([]);
+ for(const p of a.projected){
+  const bounds=p.metrics?.projection_bounds;
+  if(bounds){const [x0,y0,x1,y1]=bounds;px.strokeStyle=p.qualified?'#11896a':'#df4855';px.lineWidth=p.id===objectId?2:1;px.strokeRect(x0/c.width*w,y0/c.height*h,(x1-x0)/c.width*w,(y1-y0)/c.height*h);}
+  if(p.depth_m<=0||p.u===null||p.v===null||p.u<0||p.u>c.width-1||p.v<0||p.v>c.height-1)continue;
+  const x=p.u/c.width*w,y=p.v/c.height*h;px.beginPath();px.arc(x,y,p.id===objectId?6:4,0,Math.PI*2);px.fillStyle=p.qualified?'#11896a':'#df4855';px.fill();px.font='10px system-ui';px.fillText(p.id,x+6,y-3);
+ }
+ el('photoInfo').textContent=(D.observation_model==='aabb_solid_sampled'?'矩形为 Box 投影外框；绿色合格、红色不合格，遮挡程度见下方。':'绿色：满足距离与视场；红色：不合格。')+`此方向覆盖 ${a.object_ids.length} 个物体。`;
+ el('qualityInfo').textContent=a.projected.filter(p=>p.metrics&&(!objectId||p.id===objectId)).map(p=>metricText(p.id,p.metrics)).join('\n');
+}
 function selectAnchor(i){anchorIndex=i;objectId=null;actionIndex=current().actions.findIndex(a=>a.anchor_index===i);update();}
 function update(){const m=current();el('methodTitle').textContent=m.title;el('anchorsCount').textContent=m.anchors.length;el('photosCount').textContent=m.actions.length;el('coverageCount').textContent=D.objects.length?`${D.objects.length-m.uncovered_object_ids.length}/${D.objects.length}`:'—';el('methodInfo').textContent=`评估 ${m.candidate_count.toLocaleString()} 个位置 · 本次候选生成 ${(m.generation_seconds*1000).toFixed(1)} ms`;
  el('anchorChoices').replaceChildren(...m.anchors.map((a,i)=>button('站位 A'+(i+1),()=>selectAnchor(i),i===anchorIndex&&!objectId)));
  if(objectId){const obj=D.objects.find(o=>o.id===objectId),cover=m.anchors.map((a,i)=>a.observations.some(o=>o.object_ids.includes(objectId))?'A'+(i+1):null).filter(Boolean);el('detailTitle').textContent='物体 '+objectId;el('details').textContent=`位置 (${obj.position.map(v=>v.toFixed(2)).join(', ')}) m；支持它的候选站位 ${(m.inverse[objectId]||[]).length} 个；最终观察站位：${cover.join('、')||'无'}。`;
+ if(obj.aabb)el('details').textContent+=` 底部 ${obj.aabb.min[2].toFixed(2)} m，顶部 ${obj.aabb.max[2].toFixed(2)} m。`;
+ const best=D.object_diagnostics?.[objectId];if(!cover.length&&best)el('details').textContent+=' 最佳已检查候选：'+metricText(objectId,best.metrics);
  }else{const a=m.anchors[anchorIndex];el('detailTitle').textContent=a?'站位 A'+(anchorIndex+1):'站位与拍摄动作';el('details').textContent=a?`区域 ${a.region_id} · 位置 (${a.position.map(v=>v.toFixed(3)).join(', ')}) m · 候选站位编号 ${a.station_index}`:'没有选出的站位。';}
- const relevant=m.actions.map((a,i)=>({a,i})).filter(({a})=>objectId?a.object_ids.includes(objectId):a.anchor_index===anchorIndex);
- el('photoChoices').replaceChildren(...relevant.map(({a,i})=>button(`${(a.yaw_rad*180/Math.PI).toFixed(0)}° · ${a.object_ids.length} 点`,()=>{actionIndex=i;update();},i===actionIndex)));
- el('objectChoices').replaceChildren(...D.objects.map(o=>button(o.id,()=>{objectId=o.id;const i=m.actions.findIndex(a=>a.object_ids.includes(o.id));actionIndex=i;anchorIndex=i>=0?m.actions[i].anchor_index:-1;update();},o.id===objectId)));
+ const relevant=m.actions.map((a,i)=>({a,i})).filter(({a})=>objectId?(a.projected.some(p=>p.id===objectId&&p.metrics)||a.object_ids.includes(objectId)):a.anchor_index===anchorIndex);
+ el('photoChoices').replaceChildren(...relevant.map(({a,i})=>button(`${(a.yaw_rad*180/Math.PI).toFixed(0)}° · ${a.object_ids.length} 物体`,()=>{actionIndex=i;update();},i===actionIndex)));
+ el('objectChoices').replaceChildren(...D.objects.map(o=>button(o.id,()=>{objectId=o.id;const i=m.actions.findIndex(a=>a.object_ids.includes(o.id));actionIndex=i>=0?i:(m.actions.length?0:-1);anchorIndex=actionIndex>=0?m.actions[actionIndex].anchor_index:-1;update();},o.id===objectId)));
  el('photoTitle').textContent=action()?`投影示意 · 底盘偏航 ${(action().yaw_rad*180/Math.PI).toFixed(0)}°（不是照片）`:'投影示意（不是照片）';draw();renderProjection();}
 methods.forEach((m,i)=>{const option=document.createElement('option');option.value=i;option.textContent=m.title;el('method').append(option);});
 el('method').onchange=()=>{methodIndex=Number(el('method').value);anchorIndex=0;actionIndex=0;objectId=null;update();};
@@ -66,9 +82,10 @@ el('reset').onclick=reset;el('export').onclick=()=>{const a=document.createEleme
 canvas.addEventListener('wheel',e=>{e.preventDefault();const box=canvas.getBoundingClientRect(),x=e.clientX-box.left,y=e.clientY-box.top,old=zoom;zoom=Math.max(.3,Math.min(20,zoom*Math.exp(-e.deltaY*.0015)));tx=x-(x-tx)*zoom/old;ty=y-(y-ty)*zoom/old;draw();},{passive:false});
 canvas.addEventListener('pointerdown',e=>{drag=[e.clientX,e.clientY,tx,ty];moved=false;canvas.setPointerCapture(e.pointerId);});
 canvas.addEventListener('pointermove',e=>{if(!drag)return;const dx=e.clientX-drag[0],dy=e.clientY-drag[1];if(Math.hypot(dx,dy)>3)moved=true;if(moved){tx=drag[2]+dx;ty=drag[3]+dy;draw();}});
-canvas.addEventListener('pointerup',e=>{if(drag&&!moved){const box=canvas.getBoundingClientRect(),x=e.clientX-box.left,y=e.clientY-box.top;const distance=p=>{const q=point(p);return Math.hypot(q[0]-x,q[1]-y);};const a=current().anchors.findIndex(a=>distance(a.position)<14);if(a>=0)selectAnchor(a);else{const obj=D.objects.find(o=>distance(o.position)<12);if(obj){objectId=obj.id;actionIndex=current().actions.findIndex(a=>a.object_ids.includes(obj.id));anchorIndex=actionIndex>=0?current().actions[actionIndex].anchor_index:-1;update();}}}drag=null;});
+canvas.addEventListener('pointerup',e=>{if(drag&&!moved){const box=canvas.getBoundingClientRect(),x=e.clientX-box.left,y=e.clientY-box.top;const distance=p=>{const q=point(p);return Math.hypot(q[0]-x,q[1]-y);};const a=current().anchors.findIndex(a=>distance(a.position)<14);if(a>=0)selectAnchor(a);else{const obj=D.objects.find(o=>distance(o.position)<12);if(obj){objectId=obj.id;actionIndex=current().actions.findIndex(a=>a.object_ids.includes(obj.id));if(actionIndex<0&&current().actions.length)actionIndex=0;anchorIndex=actionIndex>=0?current().actions[actionIndex].anchor_index:-1;update();}}}drag=null;});
 canvas.addEventListener('pointercancel',()=>{drag=null;});
-el('sceneInfo').textContent=`${D.scene_name} · ${cols}×${rows} 格 · ${res} m/格 · ${D.objects.length} 个物体点 · ${D.region_count} 个安全连通区域 · ${D.stations.length} 个候选站位`;
+el('sceneInfo').textContent=`${D.scene_name} · ${cols}×${rows} 格 · ${res} m/格 · ${D.objects.length} 个物体 · ${D.region_count} 个安全连通区域 · ${D.stations.length} 个候选站位`;
+el('modelInfo').textContent=D.observation_model==='aabb_solid_sampled'?`实心 AABB 遮挡估计 · 入镜至少 ${Math.round(D.observation_settings.min_in_frame_fraction*100)}% · 未遮挡至少 ${Math.round(D.observation_settings.min_visible_fraction*100)}% · 可见至少 ${D.observation_settings.min_visible_pixels} px²；尚未验证真实识别`:'旧点模型：视场＋距离；未评估遮挡与物体尺寸';
 window.addEventListener('resize',()=>{reset();renderProjection();});reset();update();
 </script>
 </body></html>
