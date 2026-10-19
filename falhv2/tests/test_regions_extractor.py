@@ -5,7 +5,7 @@ from pathlib import Path
 from xml.etree import ElementTree
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
-from path_planner import GridMap, PlanningError, diagnostic_svg, plan
+from regions_extractor import GridMap, PlanningError, diagnostic_svg, plan
 
 
 def scene(rows, resolution=0.5, origin=(0, 0)):
@@ -18,7 +18,7 @@ def robot(width=0.28, length=0.28, margin=0.0):
                       "footprint_length_m": length, "safety_margin_m": margin}}
 
 
-class PathPlannerTests(unittest.TestCase):
+class SafeRegionTests(unittest.TestCase):
     def test_coordinate_conversion_uses_bottom_left_origin_and_top_first_rows(self):
         grid = GridMap.from_scene(scene([".#?", "..."], origin=(10, -2)))
         self.assertEqual(grid.cell_to_world((0, 0)), (10.25, -1.25))
@@ -26,28 +26,47 @@ class PathPlannerTests(unittest.TestCase):
         self.assertEqual(grid.world_to_cell(10.25, -1.25), (0, 0))
         self.assertEqual(grid.world_to_cell(11.25, -1.75), (1, 2))
 
-    def test_each_region_path_is_continuous_safe_and_complete(self):
+    def test_regions_partition_exactly_the_safe_free_cells(self):
         data = scene(["..?...", "..?..."])
         result = plan(data, robot())
         grid = GridMap.from_scene(data)
         self.assertEqual(result["statistics"]["region_count"], 2)
         self.assertEqual(result["statistics"]["traversable_cells"], 10)
-        self.assertEqual(result["statistics"]["visited_traversable_cells"], 10)
         self.assertEqual([len(region["cells"]) for region in result["regions"]], [4, 6])
         all_cells = set()
-        for region in result["regions"]:
-            cells = [tuple(cell) for cell in region["route_cells"]]
-            self.assertEqual(set(cells), {tuple(cell) for cell in region["cells"]})
-            self.assertTrue(all(abs(a[0] - b[0]) + abs(a[1] - b[1]) == 1
-                                for a, b in zip(cells, cells[1:])))
+        for region in result['regions']:
+            cells = set(map(tuple, region['cells']))
+            self.assertFalse(all_cells & cells)
             all_cells.update(cells)
-            self.assertAlmostEqual(region["path_length_m"], 0.5 * (len(cells) - 1))
-            for a, b in zip(region["waypoints"], region["waypoints"][1:]):
-                midpoint = ((a["x_m"] + b["x_m"]) / 2, (a["y_m"] + b["y_m"]) / 2)
-                self.assertGreaterEqual(grid.clearance_at(*midpoint) + 1e-10,
-                                        math.hypot(0.28, 0.28) / 2)
-        self.assertTrue(all(grid.rows[row][col] == "." for row, col in all_cells))
+            reached = {min(cells)}
+            pending = list(reached)
+            while pending:
+                r, c = pending.pop()
+                for dr, dc in ((0, 1), (0, -1), (1, 0), (-1, 0)):
+                    neighbor = (r+dr, c+dc)
+                    if neighbor in cells and neighbor not in reached:
+                        reached.add(neighbor)
+                        pending.append(neighbor)
+            self.assertEqual(reached, cells)
+            self.assertNotIn('route_cells', region)
+            self.assertNotIn('waypoints', region)
+        expected = {(r, c) for r in range(grid.height) for c in range(grid.width)
+                    if grid.rows[r][c] == '.' and
+                    grid.clearance_at(*grid.cell_to_world((r, c))) + 1e-10 >= math.hypot(.28, .28)/2}
+        self.assertEqual(all_cells, expected)
         self.assertEqual(result["visual_object_coverage"], "not_evaluated")
+
+    def test_diagonal_free_cells_are_separate_regions(self):
+        result = plan(scene(['.#', '#.']), robot())
+        self.assertEqual([r['cells'] for r in result['regions']], [[[0, 0]], [[1, 1]]])
+
+    def test_robot_clearance_splits_a_connected_white_area(self):
+        data = scene(['....#....', '....#....', '.........', '....#....', '....#....'], resolution=1)
+        small = plan(data, robot(width=.2, length=.2))
+        large = plan(data, robot(width=.8, length=.8))
+        self.assertEqual(len(small['regions']), 1)
+        self.assertEqual(len(large['regions']), 2)
+        self.assertTrue(all([2, 4] not in r['cells'] for r in large['regions']))
 
     def test_footprint_clearance_excludes_narrow_cells(self):
         data = scene(["###", "#.#", "###"])
@@ -73,21 +92,16 @@ class PathPlannerTests(unittest.TestCase):
         config = robot()
         result = plan(data, config)
         self.assertEqual(result["status"], "complete")
-        self.assertEqual(result["statistics"]["visited_traversable_cells"],
-                         result["statistics"]["traversable_cells"])
         grid = GridMap.from_scene(data)
         clearance = math.hypot(config["robot"]["footprint_width_m"],
                                config["robot"]["footprint_length_m"]) / 2 + config["robot"]["safety_margin_m"]
-        for region in result["regions"]:
-            route = [tuple(cell) for cell in region["route_cells"]]
-            for a, b in zip(route, route[1:]):
-                self.assertEqual(abs(a[0] - b[0]) + abs(a[1] - b[1]), 1)
-                ax, ay = grid.cell_to_world(a)
-                bx, by = grid.cell_to_world(b)
-                self.assertGreaterEqual(grid.clearance_at((ax + bx) / 2, (ay + by) / 2)
-                                        + 1e-10, clearance)
+        expected = {(r, c) for r in range(grid.height) for c in range(grid.width)
+                    if grid.rows[r][c] == '.' and
+                    grid.clearance_at(*grid.cell_to_world((r, c))) + 1e-10 >= clearance}
+        actual = {tuple(cell) for region in result['regions'] for cell in region['cells']}
+        self.assertEqual(actual, expected)
         graphic = diagnostic_svg(data, result)
-        self.assertIn("<polyline", graphic)
+        self.assertNotIn("<polyline", graphic)
         ElementTree.fromstring(graphic)
 
 

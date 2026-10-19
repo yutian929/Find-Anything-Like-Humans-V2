@@ -43,7 +43,7 @@ def brute_supports(stations, objects, camera, yaws):
 class ObjectDriverTests(unittest.TestCase):
     def test_screening_matches_dense_with_offset_camera_and_noncontiguous_indices(self):
         rng = np.random.default_rng(42)
-        stations = [Station(11 + 3 * i, 1, (i, 0), tuple(p), (i,)) for i, p in enumerate(rng.uniform(-8, 8, (80, 2)))]
+        stations = [Station(11 + 3 * i, 1, (i, 0), tuple(p)) for i, p in enumerate(rng.uniform(-8, 8, (80, 2)))]
         objects = [{"id": f"p{i}", "position": p.tolist()} for i, p in enumerate(rng.uniform([-6, -6, 0], [6, 6, 2], (15, 3)))]
         camera = OffsetCamera()
         result = generate(stations, objects, camera, yaw_step_deg=45)
@@ -55,7 +55,7 @@ class ObjectDriverTests(unittest.TestCase):
         self.assertEqual(partial.supports, {key: value for key, value in result.supports.items() if key in selected})
 
     def test_screening_preserves_maximum_range_boundary(self):
-        station = Station(19, 1, (0, 0), (0.0, 0.0), (0,))
+        station = Station(19, 1, (0, 0), (0.0, 0.0))
         # Base-to-object distance exceeds camera max range due to mount offset.
         objects = [{"id": "edge", "position": [2.7 - 1e-12, 0.0, 0.8]}]
         result = generate([station], objects, OffsetCamera(), yaw_step_deg=90)
@@ -69,7 +69,7 @@ class ObjectDriverTests(unittest.TestCase):
         config["observation_quality"] = {"min_distance_m": 0.2, "max_distance_m": 3.0}
         camera = PointCamera(config)
         rng = np.random.default_rng(893)
-        stations = [Station(100 + i * 7, 1, (i, 0), tuple(p), (i,)) for i, p in enumerate(rng.uniform(-5, 5, (45, 2)))]
+        stations = [Station(100 + i * 7, 1, (i, 0), tuple(p)) for i, p in enumerate(rng.uniform(-5, 5, (45, 2)))]
         objects = [{"id": str(i), "position": p.tolist()} for i, p in enumerate(rng.uniform([-4, -4, 0], [4, 4, 2.5], (18, 3)))]
         result = generate(stations, objects, camera, yaw_step_deg=30)
         self.assertTrue(result.supports)

@@ -1,8 +1,8 @@
 # FALH-V2
 
-本目录实现从地图构建、覆盖路线规划、观察锚点选择，到视觉采集与找物验证的各阶段功能。本 README 记录运行环境、已实现模块的用法及后续任务入口。
+本目录实现从地图构建、安全区域提取、观察锚点选择，到视觉采集与找物验证的各阶段功能。本 README 记录运行环境、已实现模块的用法及后续任务入口。
 
-研究定义与算法依据见[路径约束下的锚点选择](../docs/falhv2/path_constrained_anchor_selection_v0_20261013.md)；实施进度和验收要求见[研究路线与交接](../docs/falhv2/research_roadmap_and_handoff.md)。
+研究定义与算法依据见[锚点选择研究记录（含旧版路径约束方案）](../docs/falhv2/path_constrained_anchor_selection_v0_20261013.md)；实施进度和验收要求见[研究路线与交接](../docs/falhv2/research_roadmap_and_handoff.md)。
 
 ## 环境与运行约定
 
@@ -35,7 +35,7 @@ cd /home/hri/yutian/Find-Anything-Like-Humans-V2
 | 阶段 | 内容 | 状态与入口 |
 |---|---|---|
 | 地图编辑器 | 绘制栅格地图、放置无类别物体中心点、导入导出 JSON | 已完成，见[地图编辑器](#地图编辑器) |
-| A1 区域与路线规划 | 根据地图、机器人尺寸和安全距离求全部可通行区域及区域内路线 | 已实现 EDT + OpenCV 连通域 + 分区扫描，见[A1](#a1区域与路线规划) |
+| A1 安全区域提取 | 根据地图、机器人尺寸和安全距离求全部安全连通区域 | 已实现 EDT + OpenCV 连通域，见[A1](#a1安全区域提取) |
 | A2 观察模型 | 物体驱动反向查询，点视场与距离覆盖 | 已接入 `main`，见[锚点规划](#a2a3物体驱动锚点规划) |
 | A3 锚点选择 | 动态投票、冗余删除与拍摄方向选择 | 已接入 `anchor_selector.py`，待现场验证 |
 | A4 离线验证 | 精确解核对、基线比较、质量与成本评估 | 已完成首轮八场景实验，见[报告](../docs/falhv2/anchor_driver_experiment_20261014.md) |
@@ -50,7 +50,7 @@ falhv2/
 ├── README.md
 ├── map_editor.html                  # 地图编辑器页面
 ├── map_editor.py                # 地图编辑器启动入口
-├── path_planner.py              # A1：可通行区域与区域内路线
+├── regions_extractor.py              # A1：安全格中心与四连通区域
 ├── camera_parameters.py         # D435i 相机标定导出
 ├── anchor_selector.py            # A2/A3：物体驱动锚点与拍摄动作
 ├── anchor_selector.html           # 离线交互展示模板
@@ -60,8 +60,8 @@ falhv2/
 │   ├── robot.json               # 当前机器人尺寸与安全距离
 │   └── camera.d435i.json        # 当前 D435i 的默认 RGB 内参
 ├── outputs/                     # 本地产物，Git 忽略
-│   ├── path_plan.json           # A1 区域与路线结果
-│   ├── path_diagnostic.svg      # A1 诊断图
+│   ├── safe_regions.json        # A1 安全区域结果
+│   ├── safe_regions.svg         # A1 安全区域诊断图
 │   ├── anchor_plan.json         # 锚点、拍摄方向与覆盖缺口
 │   ├── anchor_plan.html         # 可直接打开的离线交互页面
 │   └── anchor_plan.svg          # 静态诊断图
@@ -90,12 +90,12 @@ python falhv2/map_editor.py
 
 导出内容为 `name`、`grid` 和 `objects`。旧场景文件可以打开，但只保留这些地图数据。
 
-## A1：区域与路线规划
+## A1：安全区域提取
 
 运行示例：
 
 ```bash
-python -B falhv2/path_planner.py
+python -B falhv2/regions_extractor.py
 ```
 
 默认读取 `data/map.json` 和 `data/robot.json`，缺失时报错。需要使用其他地图时通过 `--scene` 显式指定。`outputs/` 和备份目录 `outputs_/` 不纳入版本控制；删除 outputs 不影响正式输入。
@@ -103,11 +103,11 @@ python -B falhv2/path_planner.py
 也可显式指定输入和输出：
 
 ```bash
-python -B falhv2/path_planner.py \
+python -B falhv2/regions_extractor.py \
   --scene falhv2/data/map.json \
   --robot falhv2/data/robot.json \
-  --output falhv2/outputs/path_plan.json \
-  --svg falhv2/outputs/path_diagnostic.svg
+  --output falhv2/outputs/safe_regions.json \
+  --svg falhv2/outputs/safe_regions.svg
 ```
 
 **输入：** 栅格地图，以及机器人的足迹长、宽和安全距离。A1 无需起点、终点、物体分布或相机参数；读取编辑器导出的场景时，只使用其中的 `grid`。
@@ -126,11 +126,11 @@ python -B falhv2/path_planner.py \
 
 这些值仅供示例使用，实际应用时应填写机器人的实测尺寸与所需安全距离。
 
-**方法：** 用矩形足迹的外接圆加安全距离做保守碰撞检查，使用 EDT 提取安全格中心，再用 OpenCV 四连通标记提取区域。在各区域内进行区间分解和往复扫描，用 A* 连接分区，并比较横向与纵向方案，覆盖全部安全格中心。规划模型假设底盘可以原地转向。
+**方法：** 用矩形足迹的外接圆加安全距离做保守碰撞检查，使用半栅格 EDT 提取安全格中心，再用 OpenCV 四连通标记提取区域。障碍、未知格和地图外部均限制净空；白色空闲格还须满足机器人尺寸条件。模型假设底盘可以原地转向。
 
-**输出：** 每个区域的格子集合、路线、世界坐标航点、长度及汇总统计，另附 SVG 诊断图。路线首尾由算法确定；断开的区域分别输出。没有任何可通行格时，命令以非零状态退出并说明原因。
+**输出：** 每个区域的安全格集合、地图与机器人配置、区域数量及安全格数量，另附 SVG 诊断图。没有任何安全格时，命令以非零状态退出并说明原因。
 
-区域数量与路线长度取决于输入地图和机器人配置。物体视觉覆盖标记为 `not_evaluated`，留待 A2 判断。实际执行时还需把机器人当前位置接入对应区域路线，并由导航控制器跟踪。
+A1 不再生成全覆盖扫描路线，区域中的每个安全格中心直接成为 A2 候选站位。没有起点输入，因此保留所有安全连通区域，不表示机器人从当前位置可以到达每个区域。选站后的避障路径、访问顺序和区域转移留待执行层实现；物体视觉覆盖由 A2/A3 判断。
 
 ## 读取 D435i 相机参数
 
@@ -177,7 +177,7 @@ python -B falhv2/camera_parameters.py --list-modes
 python -B falhv2/anchor_selector.py
 ```
 
-默认输入与 A1 一致：读取 `data/map.json`、`data/robot.json`，相机读取 `data/camera.d435i.json`。脚本内部调用 A1 重新生成匹配当前地图与机器人配置的路线，不直接读取旧的 `path_plan.json`，因此也可独立运行。无需机器人起始位姿、起终点或指定锚点数量。
+默认输入与 A1 一致：读取 `data/map.json`、`data/robot.json`，相机读取 `data/camera.d435i.json`。脚本内部调用 A1 重新计算安全区域并直接生成站位，不读取已有规划输出，因此可独立运行。无需机器人起始位姿、起终点或指定锚点数量。
 
 也可显式指定编辑器保存的地图和配置：
 
@@ -194,8 +194,8 @@ python -B falhv2/anchor_selector.py \
 
 ### 处理流程
 
-1. A1 生成各连通区域路线；合并重复经过的格中心，保留区域和访问索引。
-2. 对每个物体用 KDTree 查询附近路径站位，保守查询半径为最远观察距离加相机水平安装偏移。
+1. A1 提取安全连通区域，每个安全格中心生成一个候选站位；按区域 ID、行、列固定排序。
+2. 对每个物体用 KDTree 查询附近安全站位，保守查询半径为最远观察距离加相机水平安装偏移。
 3. 逐方向变换到相机坐标，用正深度、图像边界和三维欧氏距离生成稀疏二值覆盖关系 `q(i,θ,o)`。当前没有物体尺寸或 AABB，不计算像素宽高。
 4. 每个未覆盖物体对每站最多投一票，动态贪心选站；删除冗余站位，再选择和删除冗余拍摄方向。
 5. 重新检查每个最终拍摄动作，输出锚点计划和可视化。
@@ -204,8 +204,8 @@ python -B falhv2/anchor_selector.py \
 
 | 文件 | 内容 |
 |---|---|
-| `outputs/anchor_plan.json` | 站位、区域、路径首次访问索引、底盘偏航（弧度）、每张照片覆盖的物体 ID、缺口、配置与耗时 |
-| `outputs/anchor_plan.html` | 自包含离线交互页面；可缩放、平移、点选物体和站位、查看投影、叠加路线与票数，并导出当前地图 PNG |
+| `outputs/anchor_plan.json` | 站位编号、区域、格坐标、底盘偏航（弧度）、每张照片覆盖的物体 ID、缺口、配置与耗时 |
+| `outputs/anchor_plan.html` | 自包含离线交互页面；可缩放、平移、点选物体和站位、查看投影、显示安全区域与候选票数，并导出当前地图 PNG |
 | `outputs/anchor_plan.svg` | 静态地图、候选票数、锚点与拍摄方向 |
 | `outputs/anchor_plan.supports.json` | 加 `--save-supports` 时导出 A2 完整稀疏二值关系；方向键是 `yaws_rad` 的索引，未列出的项为 0 |
 
@@ -213,7 +213,15 @@ python -B falhv2/anchor_selector.py \
 
 全部输入目标进入统计：全部有支持返回 `complete`；有缺口返回 `partial` 并列出原始物体 ID；空目标返回 `empty_targets`、零锚点和 `null` 覆盖率。缺口指当前离散站位与方向无支持，未证明连续空间无解。无可通行格、未补全相机参数或非零畸变系数会明确报错。
 
-历史实验地图在当时配置下得到 **3 个站位、10 张定向照片，28/28 点覆盖**；该快照保留在实验分支，主线直接使用编辑器保存的地图。选择采用启发式，脚本不承诺全局最少站位或照片。覆盖仅表示中心点满足视场与距离，没有评估三维遮挡和实际识别；二维导航障碍不直接作为相机遮挡。区域间路线未连接，锚点顺序沿区域内 A1 首次访问顺序排列，尚未缩短完整行驶路线。
+历史实验地图在当时配置下得到 **3 个站位、10 张定向照片，28/28 点覆盖**；该快照保留在实验分支，主线直接使用编辑器保存的地图。选择采用启发式，脚本不承诺全局最少站位或照片。覆盖仅表示中心点满足视场与距离，没有评估三维遮挡和实际识别；二维导航障碍不直接作为相机遮挡。锚点按站位编号排列，仅用于稳定展示，不代表访问顺序。当前包含所有安全连通区域，尚未根据起点筛选，也未规划站位之间的行驶路线。
+
+### 从扫描路线版迁移
+
+2026-10-19 起移除前置全覆盖扫描，`path_planner.py` 替换为 `regions_extractor.py`。原路线覆盖全部安全格中心，所以删除扫描不改变候选位置集合；站位编号改为区域、行、列顺序，平票时选出的具体位置可能变化。
+
+锚点计划与 supports 导出使用 `schema_version: 2`。移除 `first_route_index`、`route_indices`、`region_transfer` 和路线长度统计，新增 `navigation: not_planned`、未指定起点的可达性说明及 `station_order`。预处理统计改为 `safe_regions_and_station_seconds`、`safe_station_count`。`plan()` 的第二个返回值为安全区域结果。旧路线文件不再生成或读取；查看时请重新运行入口，使用新导出的页面。
+
+本次用当前地图对照改造前后：3 个区域、8,842 个候选位置以及按格坐标对齐的完整方向覆盖关系一致，均得到 3 个站位、10 张照片、28/28 点覆盖。该结果仍属于几何预计覆盖。
 
 ### 选型与后续
 
@@ -226,7 +234,7 @@ python -B falhv2/anchor_selector.py \
 - 编辑器宽高支持 4–512 格；例如 300×300 格、0.05 米/格对应 15×15 米。大地图自动缩放显示，格子较小时隐藏网格线；导出分辨率和格子数量保持设置值。
 - 每个物体保存稳定的 `id` 和 `position: [x, y, z]`。
 - 二维障碍仅表示导航占据，不包含高度或三维相机遮挡几何。
-- 当前可通行区域由安全格中心表示；区域路线覆盖与物体视觉覆盖分别评估。
+- 当前安全区域由满足足迹净空的格中心表示；连通性与物体视觉覆盖分别评估。
 
 ## 测试
 
@@ -238,7 +246,7 @@ node falhv2/tests/test_editor_ui.cjs
 node falhv2/tests/test_anchor_viewer.cjs
 ```
 
-Python 测试覆盖页面服务、路线合法性、相机几何、反向筛选与穷举一致性、投票、覆盖缺口和正式 CLI 导出；Node.js 测试覆盖编辑器与锚点查看页面交互。仅运行锚点测试可使用 `python -B -m unittest discover -s falhv2/tests -p 'test_anchor*.py' -v`。
+Python 测试覆盖页面服务、安全净空与连通域、完整站位集合、相机几何、反向筛选与穷举一致性、投票、覆盖缺口和正式 CLI 导出；Node.js 测试覆盖编辑器与锚点查看页面交互。仅运行锚点测试可使用 `python -B -m unittest discover -s falhv2/tests -p 'test_anchor*.py' -v`。
 
 ## 后续模块维护
 

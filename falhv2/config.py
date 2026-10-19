@@ -12,8 +12,8 @@ ROBOT_PATH = DATA_DIR / 'robot.json'
 CAMERA_PATH = DATA_DIR / 'camera.d435i.json'
 
 # 可重新生成的结果与相机读取草稿。
-PATH_PLAN_PATH = OUTPUT_DIR / 'path_plan.json'
-PATH_SVG_PATH = OUTPUT_DIR / 'path_diagnostic.svg'
+SAFE_REGIONS_PATH = OUTPUT_DIR / 'safe_regions.json'
+SAFE_REGIONS_SVG_PATH = OUTPUT_DIR / 'safe_regions.svg'
 ANCHOR_PLAN_PATH = OUTPUT_DIR / 'anchor_plan.json'
 CAMERA_EXPORT_PATH = OUTPUT_DIR / 'camera.d435i.json'
 

@@ -1,4 +1,4 @@
-"""物体驱动锚点规划：A1 路径 → 反向覆盖关系 → 动态投票 → 定向拍摄。
+"""物体驱动锚点规划：安全区域 → 反向覆盖关系 → 动态投票 → 定向拍摄。
 
 默认从 data/map.json、data/robot.json 和 data/camera.d435i.json 读取输入，
 输出离线 JSON / HTML / SVG。覆盖模型仅检查三维中心点的相机视场与距离。
@@ -21,11 +21,11 @@ import json
 from scipy.spatial import cKDTree
 
 try:
-    from .path_planner import plan as plan_path, diagnostic_svg, PlanningError
+    from .regions_extractor import plan as find_safe_regions, diagnostic_svg, PlanningError
     from . import config as settings
     from .config import read_input
 except ImportError:
-    from path_planner import plan as plan_path, diagnostic_svg, PlanningError
+    from regions_extractor import plan as find_safe_regions, diagnostic_svg, PlanningError
     import config as settings
     from config import read_input
 
@@ -38,7 +38,6 @@ class Station:
     region_id: int
     cell: tuple[int, int]
     position: tuple[float, float]
-    route_indices: tuple[int, ...]
 
 
 @dataclass
@@ -72,20 +71,20 @@ def validate_objects(objects: Sequence[dict]) -> list[dict]:
     return result
 
 
-def stations_from_plan(path_plan: dict) -> list[Station]:
-    """First-visit path order; repeated physical locations retain all visit indices."""
-    grid = path_plan["grid"]
+def stations_from_regions(safe_regions: dict) -> list[Station]:
+    """One candidate per safe cell, ordered by region ID, row, then column.
+
+    Indices provide deterministic selection ties; they are not a visit order.
+    """
+    grid = safe_regions["grid"]
     height, resolution = grid["height"], grid["resolution"]
     origin = grid["origin"]
     stations = []
-    for region in path_plan["regions"]:
-        visits = {}
-        for route_index, cell in enumerate(region["route_cells"]):
-            visits.setdefault(tuple(cell), []).append(route_index)
-        for (row, col), indices in visits.items():
+    for region in sorted(safe_regions["regions"], key=lambda region: region["id"]):
+        for row, col in sorted(region["cells"]):
             position = (origin[0] + (col+0.5)*resolution,
                         origin[1] + (height-row-0.5)*resolution)
-            stations.append(Station(len(stations), region["id"], (row, col), position, tuple(indices)))
+            stations.append(Station(len(stations), region["id"], (row, col), position))
     return stations
 
 
@@ -275,7 +274,7 @@ def select_anchors(candidates: CandidateResult, stations: list[Station], object_
     need = set(covered)
     actions = []
     while need:
-        # Deterministic tie-break by station first-visit order and yaw index.
+        # Deterministic tie-break by station index (region/row/column order) and yaw index.
         key = min(directions, key=lambda key: (-len(directions[key] & need), key))
         if not (directions[key] & need):
             raise ValueError("Direction selection lost station coverage")
@@ -295,7 +294,6 @@ def select_anchors(candidates: CandidateResult, stations: list[Station], object_
         if observations:
             anchors.append({"station_index": i, "region_id": station.region_id,
                             "position": list(station.position), "cell": list(station.cell),
-                            "first_route_index": station.route_indices[0],
                             "observations": observations})
     actual = {obj for anchor in anchors for action in anchor["observations"] for obj in action["object_ids"]}
     if actual != covered:
@@ -306,11 +304,12 @@ def select_anchors(candidates: CandidateResult, stations: list[Station], object_
             "covered_object_ids": sorted(actual), "uncovered_object_ids": sorted(remaining),
             "anchors": anchors, "vote_trace": trace,
             "optimality": "heuristic_not_globally_optimal",
-            "region_transfer": "separate_region_routes_no_inter_region_connection"}
+            "navigation": "not_planned",
+            "start_reachability": "not_evaluated_no_start_pose"}
 
 
 def plan(scene, robot_config, camera_config, *, yaw_step_deg=30):
-    """Run A1 internally and select object-driven anchors; no start pose required.
+    """Select object-driven anchors directly from safe regions; no route is built.
 
     Targets are world-frame 3D centers; base positions are (x, y, 0).
     A station may take multiple yaw-directed photos. Coverage is binary FOV/range,
@@ -320,8 +319,8 @@ def plan(scene, robot_config, camera_config, *, yaw_step_deg=30):
     camera = PointCamera(camera_config)
     yaw_grid(yaw_step_deg)
     started = perf_counter()
-    path = plan_path(scene, robot_config)
-    stations = stations_from_plan(path)
+    regions = find_safe_regions(scene, robot_config)
+    stations = stations_from_regions(regions)
     preprocessing = perf_counter() - started
     candidates = generate_candidates(stations, objects, camera, yaw_step_deg=yaw_step_deg)
     started = perf_counter()
@@ -339,24 +338,25 @@ def plan(scene, robot_config, camera_config, *, yaw_step_deg=30):
     if actual != set(selected['covered_object_ids']):
         raise ValueError('Final observations failed coverage verification')
     result = {
-        'schema_version': 1, 'method': 'object_driven',
+        'schema_version': 2, 'method': 'object_driven',
+        'candidate_scope': 'all_safe_cell_centers_in_all_regions',
+        'station_order': 'region_id_row_column',
         'scene_name': scene.get('name', 'unnamed'),
         'observation_scope': '3D point centers; FOV and Euclidean distance; occlusion and appearance not evaluated',
         'uncovered_diagnosis_scope': 'No support in the evaluated discrete station/yaw pool; not continuous-space infeasibility',
         'configuration': {'robot': robot_config, 'camera': camera_config, 'yaw_step_deg': yaw_step_deg},
-        'statistics': {'a1_and_station_seconds': preprocessing, 'selection_seconds': selection,
-                       'path_length_m': path['statistics']['total_path_length_m'],
-                       'region_count': len(path['regions']), 'path_station_count': len(stations),
+        'statistics': {'safe_regions_and_station_seconds': preprocessing, 'selection_seconds': selection,
+                       'region_count': len(regions['regions']), 'safe_station_count': len(stations),
                        **candidates.stats},
         **selected,
     }
-    return result, path, stations, candidates
+    return result, regions, stations, candidates
 
 
-def render_svg(scene,path,result,stations,candidates):
+def render_svg(scene,regions,result,stations,candidates):
     import html, math
-    svg=diagnostic_svg(scene,path)
-    grid=path['grid']; scale=36; pad=32
+    svg=diagnostic_svg(scene,regions)
+    grid=regions['grid']; scale=36; pad=32
     def screen(position):
         return (pad+(position[0]-grid['origin'][0])/grid['resolution']*scale,
                 pad+(grid['height']-(position[1]-grid['origin'][1])/grid['resolution'])*scale)
@@ -381,7 +381,7 @@ def render_svg(scene,path,result,stations,candidates):
     return svg.replace('</svg>','\n'.join(shapes)+'\n</svg>')
 
 
-def viewer_data(scene, camera_config, result, path, stations, candidates):
+def viewer_data(scene, camera_config, result, regions, stations, candidates):
     camera = PointCamera(camera_config)
     methods = []
     actions=[]
@@ -408,16 +408,16 @@ def viewer_data(scene, camera_config, result, path, stations, candidates):
     return {'scene_name':scene.get('name','unnamed'),'grid':scene['grid'],'objects':scene.get('objects',[]),
     'camera':camera_config,'methods':methods,
     'stations':[[s.index,*s.position] for s in stations],
-    'regions':[{'id':region['id'],'route':[[p['x_m'],p['y_m']] for p in region['waypoints']]} for region in path['regions']],
-    'path_length_m':path['statistics']['total_path_length_m']}
+    'region_count':len(regions['regions'])}
 
 def save_supports(destination, scene, stations, candidates):
     """Export the sparse binary q(station, yaw, object); missing entries are zero."""
     relation = {
+        'schema_version': 2, 'station_order': 'region_id_row_column',
         'object_points': scene.get('objects', []), 'yaws_rad': candidates.yaws,
         'evaluated_station_indices': candidates.station_indices,
         'positive_stations': [{'index': s.index, 'region_id': s.region_id, 'cell': list(s.cell),
-                              'position': list(s.position), 'route_indices': list(s.route_indices)}
+                              'position': list(s.position)}
                              for s in stations if s.index in candidates.supports],
         'supports': {str(i): {str(y): sorted(ids) for y, ids in directions.items()}
                      for i, directions in candidates.supports.items()},
@@ -440,14 +440,14 @@ def main():
         scene = read_input(args.scene)
         robot = read_input(args.robot)
         camera = read_input(args.camera)
-        result, path, stations, candidates = plan(scene, robot, camera, yaw_step_deg=args.yaw_step_deg)
-        payload = json.dumps(viewer_data(scene, camera, result, path, stations, candidates),
+        result, regions, stations, candidates = plan(scene, robot, camera, yaw_step_deg=args.yaw_step_deg)
+        payload = json.dumps(viewer_data(scene, camera, result, regions, stations, candidates),
                              ensure_ascii=False, allow_nan=False, separators=(',', ':'))
         payload = payload.replace('<', '\\u003c').replace('>', '\\u003e').replace('&', '\\u0026')
         page = settings.ANCHOR_VIEWER_TEMPLATE.read_text(encoding='utf-8').replace('__ANCHOR_DATA__', payload)
         args.output.parent.mkdir(parents=True, exist_ok=True)
         args.output.write_text(json.dumps(result, ensure_ascii=False, indent=2, allow_nan=False)+'\n', encoding='utf-8')
-        args.output.with_suffix('.svg').write_text(render_svg(scene, path, result, stations, candidates), encoding='utf-8')
+        args.output.with_suffix('.svg').write_text(render_svg(scene, regions, result, stations, candidates), encoding='utf-8')
         args.output.with_suffix('.html').write_text(page, encoding='utf-8')
         if args.save_supports:
             save_supports(args.output.with_suffix('.supports.json'), scene, stations, candidates)

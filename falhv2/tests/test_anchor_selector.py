@@ -12,7 +12,7 @@ import numpy as np
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
-from anchor_selector import plan, PointCamera
+from anchor_selector import plan, PointCamera, stations_from_regions
 from test_anchor_common import config
 
 
@@ -24,17 +24,42 @@ class AnchorSelectorTests(unittest.TestCase):
     def robot(self):
         return {'robot': {'footprint_width_m': .2, 'footprint_length_m': .2, 'safety_margin_m': 0}}
 
-    def test_actions_retain_path_membership_and_camera_coverage(self):
+    def test_candidates_cover_all_safe_cells_and_actions_retain_camera_coverage(self):
         scene = self.scene()
-        result, path, stations, candidates = plan(scene, self.robot(), config())
+        result, regions, stations, candidates = plan(scene, self.robot(), config())
         self.assertEqual(result['method'], 'object_driven')
         self.assertEqual(result['status'], 'complete')
+        expected = {(r['id'], tuple(cell)) for r in regions['regions'] for cell in r['cells']}
+        self.assertEqual({(s.region_id, s.cell) for s in stations}, expected)
+        self.assertEqual(len(stations), len(expected))
+        self.assertEqual([(s.region_id, s.cell) for s in stations], sorted(expected))
+        self.assertEqual(stations, stations_from_regions(regions))
+        self.assertEqual(result['schema_version'], 2)
+        self.assertEqual(result['navigation'], 'not_planned')
+        self.assertEqual(result['start_reachability'], 'not_evaluated_no_start_pose')
+        self.assertNotIn('path_length_m', result['statistics'])
+        self.assertTrue(all('first_route_index' not in a for a in result['anchors']))
         camera = PointCamera(config())
         for anchor in result['anchors']:
-            region = next(r for r in path['regions'] if r['id'] == anchor['region_id'])
-            self.assertIn(anchor['cell'], region['route_cells'])
+            region = next(r for r in regions['regions'] if r['id'] == anchor['region_id'])
+            self.assertIn(anchor['cell'], region['cells'])
             for action in anchor['observations']:
                 self.assertTrue(camera.visible(np.array([anchor['position']]), np.array([action['yaw_rad']]), scene['objects'][0]['position'])[0])
+
+    def test_all_regions_are_candidates_without_a_start_pose(self):
+        from test_anchor_object_driver import brute_supports
+        scene = self.scene()
+        scene['grid'] = {'rows': ['..#..']*3, 'origin': [10, -2], 'resolution': 1}
+        scene['objects'] = [{'id': 'left', 'position': [10.5, -.5, 0]},
+                            {'id': 'right', 'position': [14.5, -.5, 0]}]
+        result, regions, stations, candidates = plan(scene, self.robot(), config())
+        self.assertEqual(len(regions['regions']), 2)
+        self.assertEqual(len(stations), 12)
+        self.assertEqual({s.region_id for s in stations}, {1, 2})
+        self.assertEqual(stations[0].position, (10.5, .5))
+        self.assertEqual(candidates.supports,
+                         brute_supports(stations, scene['objects'], PointCamera(config()), candidates.yaws))
+        self.assertEqual(result['covered_object_ids'], ['left', 'right'])
 
     def test_partial_and_empty_keep_the_input_target_denominator(self):
         scene = self.scene()
@@ -75,6 +100,10 @@ class AnchorSelectorTests(unittest.TestCase):
             payload = re.search(r'<script id="data" type="application/json">(.*?)</script>', page, re.S)[1]
             data = json.loads(payload)
             self.assertEqual(len(data['methods']), 1)
+            self.assertEqual(data['region_count'], 1)
+            self.assertNotIn('path_length_m', data)
+            self.assertNotIn('id="path"', page)
+            self.assertNotIn('<polyline', output.with_suffix('.svg').read_text())
             self.assertEqual(data['objects'][0]['id'], scene['objects'][0]['id'])
             self.assertNotIn('__ANCHOR_DATA__', page)
             self.assertNotIn('<script>alert(1)</script>', page)
@@ -82,6 +111,8 @@ class AnchorSelectorTests(unittest.TestCase):
             supports = json.loads(output.with_suffix('.supports.json').read_text())
             self.assertTrue(supports['positive_stations'])
             self.assertTrue(supports['supports'])
+            self.assertEqual(supports['schema_version'], 2)
+            self.assertTrue(all('route_indices' not in s for s in supports['positive_stations']))
 
 
 if __name__ == '__main__':

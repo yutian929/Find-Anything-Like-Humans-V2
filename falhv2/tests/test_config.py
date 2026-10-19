@@ -11,7 +11,7 @@ from unittest.mock import patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 import anchor_selector
-import path_planner
+import regions_extractor
 import config as settings
 from test_anchor_common import config as camera_config
 
@@ -30,7 +30,7 @@ class ConfigTests(unittest.TestCase):
         outputs = root/'outputs'
         return dict(MAP_PATH=data/'scene.custom.json', ROBOT_PATH=data/'robot.custom.json',
                     CAMERA_PATH=data/'camera.custom.json', OUTPUT_DIR=outputs,
-                    PATH_PLAN_PATH=outputs/'path_plan.json', PATH_SVG_PATH=outputs/'path_diagnostic.svg',
+                    SAFE_REGIONS_PATH=outputs/'safe_regions.json', SAFE_REGIONS_SVG_PATH=outputs/'safe_regions.svg',
                     ANCHOR_PLAN_PATH=outputs/'anchor_plan.json')
 
     def test_configured_inputs_regenerate_outputs_after_deletion(self):
@@ -42,8 +42,8 @@ class ConfigTests(unittest.TestCase):
             with patch.multiple(settings, **values):
                 for _ in range(2):
                     self.assertFalse(outputs.exists())
-                    with patch.object(sys, 'argv', ['path_planner.py']), contextlib.redirect_stdout(io.StringIO()):
-                        self.assertEqual(path_planner.main(), 0)
+                    with patch.object(sys, 'argv', ['regions_extractor.py']), contextlib.redirect_stdout(io.StringIO()):
+                        self.assertEqual(regions_extractor.main(), 0)
                     (outputs/'map.json').write_text('invalid old output')
                     with patch.object(sys, 'argv', ['anchor_selector.py']), contextlib.redirect_stdout(io.StringIO()):
                         self.assertEqual(anchor_selector.main(), 0)

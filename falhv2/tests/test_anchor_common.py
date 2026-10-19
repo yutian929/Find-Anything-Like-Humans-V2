@@ -9,7 +9,7 @@ import unittest
 import numpy as np
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
-from anchor_selector import PointCamera, Station, CandidateResult, stations_from_plan, validate_objects
+from anchor_selector import PointCamera, Station, CandidateResult, validate_objects
 from anchor_selector import select_anchors
 
 
@@ -79,7 +79,7 @@ class AnchorCommonTests(unittest.TestCase):
         with self.assertRaises(ValueError): validate_objects([{'id':'x','position':[0,0,0]}]*2)
 
     def test_dynamic_votes_deduplicate_objects_and_preserve_all_targets(self):
-        stations=[Station(i,1,(0,i),(i,0),(i,)) for i in range(3)]
+        stations=[Station(i,1,(0,i),(i,0)) for i in range(3)]
         candidate=CandidateResult([0,1,2],[0.,math.pi],{
             0:{0:{'a','b'},1:{'a'}}, 1:{0:{'a','b','c'}}, 2:{0:{'c','d'}}}, {})
         selected=select_anchors(candidate,stations,['a','b','c','d'])
@@ -98,7 +98,7 @@ class AnchorCommonTests(unittest.TestCase):
     def test_small_exact_audit_and_dynamic_votes_against_brute_force(self):
         rng=np.random.default_rng(14)
         targets=['a','b','c','d','e']
-        stations=[Station(i,1,(0,i),(i,0),(i,)) for i in range(6)]
+        stations=[Station(i,1,(0,i),(i,0)) for i in range(6)]
         for _ in range(30):
             unions={i:{o for o in targets if rng.random()<.5} for i in range(6)}
             candidate=CandidateResult(list(range(6)),[0.],{i:{0:s} for i,s in unions.items() if s},{})
