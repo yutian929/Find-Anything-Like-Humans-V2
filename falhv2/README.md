@@ -4,6 +4,8 @@
 
 研究定义与算法依据见[锚点选择研究记录（含旧版路径约束方案）](../docs/falhv2/path_constrained_anchor_selection_v0_20261013.md)；实施进度和验收要求见[研究路线与交接](../docs/falhv2/research_roadmap_and_handoff.md)。
 
+首次了解当前锚点算法，建议阅读[当前锚点选取图解](../docs/falhv2/anchor_selection_explained_20261019.md)：从安全站位、入镜与遮挡检查讲到动态投票、删冗余和照片选择，配有七张示意图及默认地图的真实运行案例。
+
 ## 环境与运行约定
 
 当前使用已有的 **conda 环境 `test`**。运行或开发前，先激活环境并进入仓库根目录：
