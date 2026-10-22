@@ -27,14 +27,14 @@ class AnchorSelectorTests(unittest.TestCase):
     def test_candidates_cover_all_safe_cells_and_actions_retain_camera_coverage(self):
         scene = self.scene()
         result, regions, stations, candidates = plan(scene, self.robot(), config())
-        self.assertEqual(result['method'], 'object_driven')
+        self.assertEqual(result['method'], 'object_driven_weighted')
         self.assertEqual(result['status'], 'complete')
         expected = {(r['id'], tuple(cell)) for r in regions['regions'] for cell in r['cells']}
         self.assertEqual({(s.region_id, s.cell) for s in stations}, expected)
         self.assertEqual(len(stations), len(expected))
         self.assertEqual([(s.region_id, s.cell) for s in stations], sorted(expected))
         self.assertEqual(stations, stations_from_regions(regions))
-        self.assertEqual(result['schema_version'], 3)
+        self.assertEqual(result['schema_version'], 4)
         self.assertEqual(result['navigation'], 'not_planned')
         self.assertEqual(result['start_reachability'], 'not_evaluated_no_start_pose')
         self.assertNotIn('path_length_m', result['statistics'])
@@ -111,7 +111,7 @@ class AnchorSelectorTests(unittest.TestCase):
             supports = json.loads(output.with_suffix('.supports.json').read_text())
             self.assertTrue(supports['positive_stations'])
             self.assertTrue(supports['supports'])
-            self.assertEqual(supports['schema_version'], 3)
+            self.assertEqual(supports['schema_version'], 4)
             self.assertTrue(all('route_indices' not in s for s in supports['positive_stations']))
 
 

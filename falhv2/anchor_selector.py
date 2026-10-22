@@ -1,7 +1,8 @@
-"""物体驱动锚点规划：安全区域 → 反向覆盖关系 → 动态投票 → 定向拍摄。
+"""加权锚点规划：安全区域 → 位姿约束观察区域 → 热力图叠加 → 定向拍摄。
 
 默认从 data/map_aabb.json、data/robot.json 和 data/camera.d435i.json 读取输入，
-输出离线 JSON / HTML / SVG。支持旧点模型及完整 AABB 地图的部分遮挡、入镜比例和可见像素判断。
+输出离线 JSON / HTML / SVG，包含逐物体观察热力图与动态选点回放。
+完整 AABB 使用距离权重乘未遮挡比例，旧点地图保留单位票兼容模式。
 """
 from __future__ import annotations
 
@@ -48,7 +49,7 @@ class CandidateResult:
     yaws: list[float]
     supports: dict[int, dict[int, set[str]]]
     stats: dict
-    qualities: dict[int, dict[int, dict[str, float]]] = field(default_factory=dict)
+    scores: dict[int, dict[int, dict[str, float]]] = field(default_factory=dict)
     diagnostics: dict = field(default_factory=dict)
 
 
@@ -149,7 +150,7 @@ def generate_candidates(
     yaw_step_deg: float = 30.0,
     station_indices: list[int] | None = None,
 ) -> CandidateResult:
-    """Compute supports, conservatively screening station-target distances.
+    """Build weighted supports after height, mount and frustum region screening.
 
     ``station_indices`` contains Station.index values, not list offsets. The
     declared finite pool and yaw grid are returned even for empty supports.
@@ -169,12 +170,14 @@ def generate_candidates(
         raise ValueError("Selected station index is not in the station pool")
     positions = np.asarray([by_index[index].position for index in selected], dtype=float).reshape(-1, 2)
     supports: dict[int, dict[int, set[str]]] = {}
-    qualities: dict[int, dict[int, dict[str, float]]] = {}
+    scores: dict[int, dict[int, dict[str, float]]] = {}
     observer = BoxObserver(camera, objects) if objects and 'aabb' in objects[0] else None
     rejection_counts = Counter()
     diagnostics = {}
     screened_pairs = 0
     exact_tests = 0
+    region_pose_tests = 0
+    region_rejected = 0
     n_yaws = len(yaws)
     chunk_size = max(1, 65_536 // n_yaws)
     yaw_array = np.asarray(yaws, dtype=float)
@@ -188,43 +191,62 @@ def generate_candidates(
             point = np.asarray(obj["position"], dtype=float)
             if point.shape != (3,) or not np.all(np.isfinite(point)):
                 raise ValueError("Object positions must be finite 3D points")
-            nearby = sorted(tree.query_ball_point(point[:2], radius))
+            # Tighten XY distance by the actual camera height before yaw tests.
+            height = point[2]-camera.offset[2] if observer else 0.0
+            object_radius = (math.sqrt(max(0, camera.max_distance**2-height**2))
+                             + camera.offset_xy_norm+1e-7) if observer else radius
+            nearby = (sorted(tree.query_ball_point(point[:2], object_radius))
+                      if abs(height) <= camera.max_distance+1e-9 else [])
             screened_pairs += len(nearby)
             for start in range(0, len(nearby), chunk_size):
                 local = nearby[start : start + chunk_size]
                 base = np.repeat(positions[local], n_yaws, axis=0)
                 headings = np.tile(yaw_array, len(local))
                 if observer:
-                    metrics = observer.evaluate(object_index, base, headings)
-                    visible = np.asarray([row['qualified'] for row in metrics]).reshape(len(local), n_yaws)
+                    # Construct the mount/pitch/frustum-aware region BEFORE costly
+                    # projection sampling and occlusion. Bounds preserve partial boxes.
+                    admissible = observer.envelope(object_index, base, headings)[3]
+                    region_pose_tests += len(base)
+                    region_rejected += int((~admissible).sum())
+                    evaluated = np.flatnonzero(admissible)
+                    if not len(evaluated):
+                        continue
+                    metrics = observer.evaluate(object_index, base[evaluated], headings[evaluated])
+                    visible = np.zeros(len(base), dtype=bool)
+                    visible[evaluated] = [row['qualified'] for row in metrics]
+                    visible = visible.reshape(len(local), n_yaws)
+                    metrics_by_pose = dict(zip(evaluated.tolist(), metrics))
                     rejection_counts.update(row['reason'] for row in metrics)
-                    best_index = max(range(len(metrics)), key=lambda k: (metrics[k]['qualified'], metrics[k]['quality'], metrics[k]['visible_pixels'], -metrics[k]['center_distance_m']))
+                    best_index = max(range(len(metrics)), key=lambda k: (metrics[k]['qualified'], metrics[k]['observation_score'], metrics[k]['visible_pixels'], -metrics[k]['center_distance_m']))
                     metric = metrics[best_index]
-                    best_key = (metric['qualified'], metric['quality'], metric['visible_pixels'], -metric['center_distance_m'])
+                    best_key = (metric['qualified'], metric['observation_score'], metric['visible_pixels'], -metric['center_distance_m'])
                     previous = diagnostics.get(obj['id'])
                     if previous is None or best_key > tuple(previous['rank']):
-                        diagnostics[obj['id']] = {'rank': best_key, 'position': base[best_index].tolist(),
-                            'yaw_rad': float(headings[best_index]), 'metrics': metric}
+                        pose_index = evaluated[best_index]
+                        diagnostics[obj['id']] = {'rank': best_key, 'position': base[pose_index].tolist(),
+                            'yaw_rad': float(headings[pose_index]), 'metrics': metric}
                 else:
                     visible = np.asarray(camera.visible(base, headings, point), dtype=bool).reshape(len(local), n_yaws)
-                exact_tests += len(local) * n_yaws
+                exact_tests += len(evaluated) if observer else len(local)*n_yaws
                 rows, cols = np.nonzero(visible)
                 for row, col in zip(rows.tolist(), cols.tolist()):
                     index = selected[local[row]]
                     supports.setdefault(index, {}).setdefault(col, set()).add(obj["id"])
                     if observer:
-                        qualities.setdefault(index, {}).setdefault(col, {})[obj['id']] = metrics[row*n_yaws+col]['quality']
+                        scores.setdefault(index, {}).setdefault(col, {})[obj['id']] = metrics_by_pose[row*n_yaws+col]['observation_score']
     elapsed = perf_counter() - started
     return CandidateResult(
         station_indices=selected,
         yaws=yaws,
         supports=supports,
-        qualities=qualities,
+        scores=scores,
         diagnostics={identifier: {key: value for key, value in row.items() if key != 'rank'} for identifier, row in diagnostics.items()},
         stats={
             "elapsed_s": elapsed,
             "generation_seconds": elapsed,
             "evaluated_object_pose_pairs": exact_tests,
+            "region_pose_tests": region_pose_tests,
+            "region_rejected_pose_pairs": region_rejected,
             **({"evaluated_point_pose_pairs": exact_tests, "exact_point_pose_tests": exact_tests}
                if observer is None else {}),
             "screened_station_object_pairs": screened_pairs,
@@ -233,8 +255,8 @@ def generate_candidates(
             "yaw_count": n_yaws,
             "object_count": len(objects),
             "scope": "all declared yaws at every station in the finite reference pool",
-            "screening": "center-distance XY bound, then projected AABB sampling" if observer else "conservative XY radius, followed by shared exact visibility",
-            "observation_model": "aabb_solid_sampled" if observer else "legacy_point",
+            "screening": "height-aware XY query, mount-aware radial/frustum envelope, then sampled AABB" if observer else "conservative XY radius, followed by shared exact visibility",
+            "observation_model": "aabb_weighted_region" if observer else "legacy_point",
             "observation_reasons": dict(rejection_counts),
         },
     )
@@ -247,11 +269,11 @@ def select_anchors(candidates: CandidateResult, stations: list[Station], object_
         raise ValueError("Coverage contains unknown object IDs")
     if not set(station_sets) <= set(station_by_id):
         raise ValueError("Coverage contains unknown station IDs")
-    def action_quality(i, yaw, obj):
-        return candidates.qualities.get(i, {}).get(yaw, {}).get(obj, 1.0)
+    def action_score(i, yaw, obj):
+        return candidates.scores.get(i, {}).get(yaw, {}).get(obj, 1.0)
 
     # Integer micro-units keep lazy heap updates deterministic and exact.
-    station_quality = {i: {obj: round(1_000_000*max(action_quality(i, yaw, obj)
+    station_scores = {i: {obj: round(1_000_000*max(action_score(i, yaw, obj)
                             for yaw, ids in candidates.supports[i].items() if obj in ids))
                           for obj in ids} for i, ids in station_sets.items()}
     reverse = defaultdict(set)
@@ -260,33 +282,33 @@ def select_anchors(candidates: CandidateResult, stations: list[Station], object_
             reverse[obj].add(i)
     remaining = set(targets)
     votes = {i: len(objects) for i, objects in station_sets.items()}
-    quality_votes = {i: sum(station_quality[i].values()) for i in station_sets}
-    heap = [(-score, -quality_votes[i], i) for i, score in votes.items() if score]
+    score_votes = {i: sum(station_scores[i].values()) for i in station_sets}
+    heap = [(-score_votes[i], -score, i) for i, score in votes.items() if score]
     heapq.heapify(heap)
     chosen, trace = [], []
     while heap and remaining:
-        negative, negative_quality, i = heapq.heappop(heap)
-        if -negative != votes[i] or -negative_quality != quality_votes[i]:
+        negative_score, negative, i = heapq.heappop(heap)
+        if -negative != votes[i] or -negative_score != score_votes[i]:
             continue
         new = station_sets[i] & remaining
         if not new:
             continue
         chosen.append(i)
-        trace.append({"station_index": i, "new_object_ids": sorted(new), "votes": len(new),
-                      "quality_sum": sum(station_quality[i][obj] for obj in new)/1_000_000})
+        trace.append({"station_index": i, "new_object_ids": sorted(new), "new_object_count": len(new),
+                      "weighted_score": sum(station_scores[i][obj] for obj in new)/1_000_000})
         remaining.difference_update(new)
         for obj in new:
             for other in reverse[obj]:
                 votes[other] -= 1
-                quality_votes[other] -= station_quality[other][obj]
+                score_votes[other] -= station_scores[other][obj]
                 if votes[other] > 0:
-                    heapq.heappush(heap, (-votes[other], -quality_votes[other], other))
+                    heapq.heappush(heap, (-score_votes[other], -votes[other], other))
     # Keep an inclusion-minimal station cover, without moving any position.
     counts = Counter(obj for i in chosen for obj in station_sets[i])
     retained = set(chosen)
     prune_order = list(reversed(chosen))
-    if candidates.qualities:
-        prune_order.sort(key=lambda i: sum(station_quality[i].values()))
+    if candidates.scores:
+        prune_order.sort(key=lambda i: sum(station_scores[i].values()))
     for i in prune_order:
         if all(counts[obj] > 1 for obj in station_sets[i]):
             retained.remove(i)
@@ -297,17 +319,17 @@ def select_anchors(candidates: CandidateResult, stations: list[Station], object_
     need = set(covered)
     actions = []
     while need:
-        # Coverage first; among ties prefer better per-object visible quality.
+        # After station selection, reduce photos first, score breaks action ties.
         key = min(directions, key=lambda key: (-len(directions[key] & need),
-                  -sum(round(1_000_000*action_quality(*key, obj)) for obj in directions[key] & need), key))
+                  -sum(round(1_000_000*action_score(*key, obj)) for obj in directions[key] & need), key))
         if not (directions[key] & need):
             raise ValueError("Direction selection lost station coverage")
         actions.append(key)
         need.difference_update(directions[key])
     counts = Counter(obj for key in actions for obj in directions[key])
     prune_actions = list(reversed(actions))
-    if candidates.qualities:
-        prune_actions.sort(key=lambda key: sum(round(1_000_000*action_quality(*key, obj)) for obj in directions[key]))
+    if candidates.scores:
+        prune_actions.sort(key=lambda key: sum(round(1_000_000*action_score(*key, obj)) for obj in directions[key]))
     for key in prune_actions:
         if all(counts[obj] > 1 for obj in directions[key]):
             actions.remove(key)
@@ -317,7 +339,7 @@ def select_anchors(candidates: CandidateResult, stations: list[Station], object_
         station = station_by_id[i]
         observations = [{"yaw_index": yaw, "yaw_rad": candidates.yaws[yaw],
                          "object_ids": sorted(directions[(i, yaw)]),
-                         "quality_by_object": {obj: action_quality(i, yaw, obj) for obj in sorted(directions[(i, yaw)])}}
+                         "score_by_object": {obj: action_score(i, yaw, obj) for obj in sorted(directions[(i, yaw)])}}
                         for si, yaw in actions if si == i]
         if observations:
             anchors.append({"station_index": i, "region_id": station.region_id,
@@ -340,8 +362,8 @@ def plan(scene, robot_config, camera_config, *, yaw_step_deg=30):
     """Select object-driven anchors directly from safe regions; no route is built.
 
     Targets are world-frame 3D centers; base positions are (x, y, 0).
-    A station may take multiple yaw-directed photos. AABB coverage uses sampled
-    framing/occlusion/pixel gates; point maps retain legacy FOV/range coverage.
+    A station may take multiple yaw-directed photos. AABB coverage uses clipped
+    framing, sampled occlusion/pixels and radial score; point maps use legacy FOV/range.
     """
     objects = validate_objects(scene.get("objects", []))
     camera = PointCamera(camera_config)
@@ -373,16 +395,19 @@ def plan(scene, robot_config, camera_config, *, yaw_step_deg=30):
     if actual != set(selected['covered_object_ids']):
         raise ValueError('Final observations failed coverage verification')
     result = {
-        'schema_version': 3, 'method': 'object_driven',
+        'schema_version': 4, 'method': 'object_driven_weighted',
         'candidate_scope': 'all_safe_cell_centers_in_all_regions',
         'station_order': 'region_id_row_column',
         'scene_name': scene.get('name', 'unnamed'),
-        'observation_model': 'aabb_solid_sampled' if observer else 'legacy_point',
-        'observation_scope': ('Solid AABBs; sampled projected framing, occlusion and visible pixel area; center distance; recognition not evaluated'
+        'observation_model': 'aabb_weighted_region' if observer else 'legacy_point',
+        'observation_scope': ('Solid AABBs; clipped projected framing, sampled occlusion and visible pixel area; mount-aware radial weight; recognition not evaluated'
                               if observer else '3D point centers; FOV and Euclidean distance; occlusion and appearance not evaluated'),
         'observation_settings': observer.settings.to_dict() if observer else None,
         'object_diagnostics': candidates.diagnostics,
-        'selection_rule': 'new_qualified_objects_then_sum_of_best_visible_quality',
+        'selection_rule': 'sum_of_best_qualified_scores_then_new_object_count',
+        'score_definition': ('radial_weight_1_to_0.5_times_visible_fraction' if observer else 'legacy_unit_votes'),
+        'region_definition': ('per_bearing_and_yaw_optical_center_distance_and_AABB_frustum_overlap_envelope'
+                              if observer else 'legacy_point_no_radial_weight'),
         'uncovered_diagnosis_scope': 'No support in the evaluated discrete station/yaw pool; not continuous-space infeasibility',
         'configuration': {'robot': robot_config, 'camera': camera_config, 'yaw_step_deg': yaw_step_deg},
         'statistics': {'safe_regions_and_station_seconds': preprocessing, 'selection_seconds': selection,
@@ -391,6 +416,25 @@ def plan(scene, robot_config, camera_config, *, yaw_step_deg=30):
         **selected,
     }
     return result, regions, stations, candidates
+
+
+def object_heatmaps(candidates, object_ids):
+    """Sparse per-object maxima: [station, score, yaw, integer_vote_units].
+
+    Keep full precision in exports. Aggregate voting/heatmaps round each object's
+    station contribution to micro-units identically to select_anchors().
+    """
+    maps = {identifier: [] for identifier in object_ids}
+    for station, directions in sorted(candidates.supports.items()):
+        best = {}
+        for yaw, objects in sorted(directions.items()):
+            for obj in objects:
+                score = candidates.scores.get(station, {}).get(yaw, {}).get(obj, 1.0)
+                if obj not in best or score > best[obj][0]:
+                    best[obj] = (score, yaw)
+        for obj, (score, yaw) in best.items():
+            maps[obj].append([station, score, yaw, round(1_000_000*score)])
+    return maps
 
 
 def render_svg(scene,regions,result,stations,candidates):
@@ -402,10 +446,13 @@ def render_svg(scene,regions,result,stations,candidates):
                 pad+(grid['height']-(position[1]-grid['origin'][1])/grid['resolution'])*scale)
     shapes=['<g id="anchor-observation-overlay">']
     by_id={s.index:s for s in stations}
-    for i,directions in candidates.supports.items():
-        count=len(set().union(*directions.values()))
+    totals = defaultdict(float)
+    for entries in object_heatmaps(candidates, [o['id'] for o in scene.get('objects', [])]).values():
+        for index, score, _, units in entries:
+            totals[index] += units/1_000_000
+    for i,score in totals.items():
         x,y=screen(by_id[i].position)
-        shapes.append(f'<circle cx="{x:.2f}" cy="{y:.2f}" r="7" fill="#ff9f1c" opacity="{min(.7,.1+.06*count):.2f}"><title>{count} target votes</title></circle>')
+        shapes.append(f'<circle cx="{x:.2f}" cy="{y:.2f}" r="7" fill="#ff9f1c" opacity="{min(.7,.1+.06*score):.2f}"><title>weighted score {score:.6f}</title></circle>')
     missing=set(result['uncovered_object_ids'])
     for obj in scene.get('objects',[]):
         x,y=screen(obj['position']); color='#e63946' if obj['id'] in missing else '#2a9d8f'
@@ -443,27 +490,34 @@ def viewer_data(scene, camera_config, result, regions, stations, candidates):
             actions.append({'anchor_index':anchor_index,'yaw_rad':action['yaw_rad'],
                             'object_ids':action['object_ids'],'projected':projected})
     inverse={obj['id']:[] for obj in scene.get('objects',[])}
-    votes=[]
-    for index,directions in candidates.supports.items():
-        union=set().union(*directions.values())
-        votes.append([index,len(union)])
-        for obj in union: inverse[obj].append(index)
-    methods.append({'title':'物体驱动','anchors':result['anchors'],'actions':actions,
-        'candidate_count':len(candidates.station_indices),'votes':votes,'inverse':inverse,
+    heatmaps = object_heatmaps(candidates, inverse)
+    totals = defaultdict(int)
+    for obj, entries in heatmaps.items():
+        for index, score, _, units in entries:
+            inverse[obj].append(index)
+            totals[index] += units
+    methods.append({'title':'物体观察权重叠加','anchors':result['anchors'],'actions':actions,
+        'candidate_count':len(candidates.station_indices),
+        'votes':[[index, units/1_000_000] for index, units in sorted(totals.items())],
+        'inverse':inverse, 'object_heatmaps':heatmaps, 'vote_trace':result['vote_trace'],
         'uncovered_object_ids':result['uncovered_object_ids'],
         'generation_seconds':result['statistics']['generation_seconds']})
     return {'scene_name':scene.get('name','unnamed'),'grid':scene['grid'],'objects':scene.get('objects',[]),
     'camera':camera_config,'methods':methods,
     'observation_model':result['observation_model'],'observation_settings':result['observation_settings'],
     'object_diagnostics':result['object_diagnostics'],
+    'yaws_rad':candidates.yaws,
+    'heatmap_fields':['station_index', 'best_qualified_score', 'yaw_index', 'vote_units'],
     'stations':[[s.index,*s.position] for s in stations],
     'region_count':len(regions['regions'])}
 
 def save_supports(destination, scene, stations, candidates):
-    """Export the sparse binary q(station, yaw, object); missing entries are zero."""
+    """Export qualified supports, continuous scores and per-object heatmaps."""
     relation = {
-        'schema_version': 3, 'station_order': 'region_id_row_column',
-        'qualities': candidates.qualities,
+        'schema_version': 4, 'station_order': 'region_id_row_column',
+        'scores': candidates.scores,
+        'object_heatmaps': object_heatmaps(candidates, [o['id'] for o in scene.get('objects', [])]),
+        'heatmap_fields': ['station_index', 'best_qualified_score', 'yaw_index', 'vote_units'],
         'object_points': scene.get('objects', []), 'yaws_rad': candidates.yaws,
         'evaluated_station_indices': candidates.station_indices,
         'positive_stations': [{'index': s.index, 'region_id': s.region_id, 'cell': list(s.cell),
@@ -481,7 +535,7 @@ def main():
     parser.add_argument('--robot', type=Path, default=settings.ROBOT_PATH)
     parser.add_argument('--camera', type=Path, default=settings.CAMERA_PATH)
     parser.add_argument('--yaw-step-deg', type=float, default=30, help='底盘拍摄偏航间隔，单位度，默认 30')
-    parser.add_argument('--save-supports', action='store_true', help='另存 A2 稀疏二值覆盖关系')
+    parser.add_argument('--save-supports', action='store_true', help='另存合格支持关系、连续得分及逐物体热力图')
     parser.add_argument('--output', type=Path, default=settings.ANCHOR_PLAN_PATH)
     args = parser.parse_args()
     try:

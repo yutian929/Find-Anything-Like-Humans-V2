@@ -5,8 +5,8 @@ assert.ok(!template.includes('id="path"'));
 const script=template.match(/<script>\s*([\s\S]*?)<\/script>/)[1];
 function fixture(){
  const a=(index)=>({region_id:1,position:[.5+index,.5],station_index:index,observations:[{yaw_rad:0,object_ids:['o1','o2']}]});
- const method=(n)=>({title:n===1?'物体驱动':'位置驱动',anchors:Array.from({length:n},(_,i)=>a(i)),actions:Array.from({length:n},(_,i)=>({anchor_index:i,yaw_rad:0,object_ids:['o1','o2'],projected:[{id:'o1',u:40,v:20,depth_m:1,distance_m:1,qualified:true},{id:'o2',u:60,v:25,depth_m:2,distance_m:2,qualified:true}]})),candidate_count:3,votes:[[0,2],[1,2]],inverse:{o1:[0,1],o2:[0,1]},uncovered_object_ids:[],generation_seconds:.001});
- return {scene_name:'test map',grid:{rows:['....','....','....','....'],resolution:1,origin:[0,0]},objects:[{id:'o1',position:[1.5,1.5,.5]},{id:'o2',position:[2.5,2.5,.8]}],camera:{camera:{width:100,height:50}},methods:[method(2)],stations:[[0,.5,.5],[1,1.5,.5]],region_count:1};
+ const method=(n)=>({title:n===1?'物体驱动':'位置驱动',anchors:Array.from({length:n},(_,i)=>a(i)),actions:Array.from({length:n},(_,i)=>({anchor_index:i,yaw_rad:0,object_ids:['o1','o2'],projected:[{id:'o1',u:40,v:20,depth_m:1,distance_m:1,qualified:true},{id:'o2',u:60,v:25,depth_m:2,distance_m:2,qualified:true}]})),candidate_count:3,votes:[[0,2],[1,2]],inverse:{o1:[0,1],o2:[0,1]},uncovered_object_ids:[],generation_seconds:.001,object_heatmaps:{o1:[[0,.9,0,900000],[1,.6,1,600000]],o2:[[0,.5,1,500000],[1,.8,0,800000]]},vote_trace:[{station_index:0,new_object_ids:['o1'],weighted_score:1.4},{station_index:1,new_object_ids:['o2'],weighted_score:.8}]});
+ return {scene_name:'test map',grid:{rows:['....','....','....','....'],resolution:1,origin:[0,0]},objects:[{id:'o1',position:[1.5,1.5,.5]},{id:'o2',position:[2.5,2.5,.8]}],camera:{camera:{width:100,height:50}},methods:[method(2)],stations:[[0,.5,.5],[1,1.5,.5]],region_count:1,yaws_rad:[0,Math.PI/2]};
 }
 function start(data){
  let draws=0;
@@ -31,16 +31,34 @@ assert.match(get('sceneInfo').textContent,/1 个安全连通区域/);
 get('anchorChoices').children[1].onclick();assert.equal(get('detailTitle').textContent,'站位 A2');assert.match(get('details').textContent,/1\.500/);assert.match(get('details').textContent,/候选站位编号 1/);assert.ok(!get('details').textContent.includes('undefined'));
 get('objectChoices').children[1].onclick();assert.equal(get('detailTitle').textContent,'物体 o2');assert.match(get('details').textContent,/0\.80/);assert.match(get('details').textContent,/A1、A2/);
 get('photoChoices').children[0].onclick();assert.match(get('photoInfo').textContent,/2 个物体/);
-get('votes').checked=true;get('votes').onchange();
+get('heatmap').value='total';get('heatmap').onchange();
+assert.equal(vm.runInContext('heatValues.get(0)[0]',sandbox),1.4);
+assert.equal(vm.runInContext('heatValues.get(1)[0]',sandbox),1.4);
+get('round').value=1;get('round').oninput();
+assert.equal(vm.runInContext('heatValues.get(0)[0]',sandbox),.5);
+assert.equal(vm.runInContext('heatValues.get(1)[0]',sandbox),.8);
+assert.match(get('roundInfo').textContent,/剩余 1 个目标/);
+get('heatmap').value='object:o1';get('heatmap').onchange();
+assert.equal(get('detailTitle').textContent,'物体 o1');
+assert.equal(vm.runInContext('heatValues.get(0)[0]',sandbox),.9); // Not the global count or sum.
+assert.equal(vm.runInContext('heatValues.get(1)[0]',sandbox),.6);
+assert.equal(get('round').disabled,true); // Single-object distributions are never removed by replay.
+vm.runInContext('probeIndex=1;showHeatProbe()',sandbox);
+assert.match(get('heatInfo').textContent,/得分 0.600000.*90°/);
+get('heatmap').value='total';get('heatmap').onchange();get('round').value=2;get('round').oninput();
+assert.equal(vm.runInContext('heatValues.size',sandbox),0);
+assert.match(get('heatInfo').textContent,/没有合格观察权重/);
+get('heatmap').value='none';get('heatmap').onchange();assert.match(get('heatTitle').textContent,/已关闭/);
+get('heatmap').value='total';get('round').value=0;get('heatmap').onchange();
 const before=vm.runInContext('zoom',sandbox);get('map').listeners.wheel({preventDefault(){},clientX:400,clientY:300,deltaY:-120});assert.ok(vm.runInContext('zoom',sandbox)>before);
 get('reset').onclick();assert.equal(vm.runInContext('zoom',sandbox),1);
 const target=vm.runInContext('world(1.5,1.5)',sandbox);get('map').listeners.pointerdown({clientX:target[0],clientY:target[1],pointerId:1});get('map').listeners.pointerup({clientX:target[0],clientY:target[1]});assert.equal(get('detailTitle').textContent,'物体 o1');
 assert.ok(draws()>100);
-const empty=fixture();empty.objects=[];empty.methods.forEach(m=>{m.anchors=[];m.actions=[];m.votes=[];m.inverse={};});assert.equal(start(empty).get('coverageCount').textContent,'—');
+const empty=fixture();empty.objects=[];empty.methods.forEach(m=>{m.anchors=[];m.actions=[];m.votes=[];m.inverse={};m.object_heatmaps={};m.vote_trace=[];});assert.equal(start(empty).get('coverageCount').textContent,'—');
 const boxes=fixture();
-boxes.observation_model='aabb_solid_sampled';boxes.observation_settings={min_in_frame_fraction:.8,min_visible_fraction:.6,min_visible_pixels:400};
+boxes.observation_model='aabb_weighted_region';boxes.observation_settings={min_in_frame_fraction:.8,min_observation_score:.5,min_visible_pixels:400};
 boxes.objects[0].aabb={min:[1,1,.2],max:[2,2,.8]};
-boxes.methods[0].actions.forEach(a=>a.projected.forEach(p=>{p.metrics={in_frame_fraction:1,visible_fraction:.5,visible_pixels:250,projection_bounds:[10,5,70,45],reason:'visible_fraction',occluder_ids:['o2']};p.qualified=false;}));
+boxes.methods[0].actions.forEach(a=>a.projected.forEach(p=>{p.metrics={in_frame_fraction:1,visible_fraction:.5,visible_pixels:250,projection_bounds:[10,5,70,45],reason:'observation_score',observation_score:.4,distance_weight:.8,occluder_ids:['o2']};p.qualified=false;}));
 boxes.methods[0].uncovered_object_ids=['o1'];boxes.methods[0].actions.forEach(a=>a.object_ids=['o2']);boxes.methods[0].anchors.forEach(a=>a.observations[0].object_ids=['o2']);
 boxes.object_diagnostics={o1:{metrics:boxes.methods[0].actions[0].projected[0].metrics}};
 const boxUI=start(boxes);
@@ -49,6 +67,7 @@ boxUI.get('objectChoices').children[0].onclick();
 assert.match(boxUI.get('details').textContent,/底部 0.20 m.*顶部 0.80 m/);
 assert.match(boxUI.get('details').textContent,/最佳已检查候选/);
 assert.match(boxUI.get('qualityInfo').textContent,/未遮挡 50.0%.*遮挡物 o2/);
+assert.match(boxUI.get('qualityInfo').textContent,/得分 0.400.*距离权重 0.800/);
 assert.match(boxUI.get('photoInfo').textContent,/Box 投影外框/);
 assert.equal(boxUI.get('photoChoices').children.length,2);
 console.log('Anchor viewer: station/object/photo selection, drawing, zoom/reset, map picking and empty targets passed.');

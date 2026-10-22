@@ -1,8 +1,8 @@
-"""Sample projected solid AABBs to estimate framing, occlusion and visible pixels.
+"""Clip projected solid AABBs for framing; sample occlusion and visible pixels.
 
 The target's full projected silhouette is the framing denominator. Occlusion uses
 only its in-frame silhouette. Rays use the nearest target surface, so back faces
-are not counted. Estimates are deterministic, not analytic visibility guarantees.
+are not counted. Occlusion estimates are deterministic, not analytic guarantees.
 """
 from __future__ import annotations
 
@@ -11,12 +11,18 @@ from itertools import product
 import math
 
 import numpy as np
+import cv2
+
+try:
+    from .observation_region import camera_poses, radial_envelope, radial_weight
+except ImportError:
+    from observation_region import camera_poses, radial_envelope, radial_weight
 
 
 @dataclass(frozen=True)
 class ObservationSettings:
     min_in_frame_fraction: float = 0.8
-    min_visible_fraction: float = 0.6
+    min_observation_score: float = 0.5
     min_visible_pixels: float = 400.0
     sample_grid: int = 12
     refinement_grid: int = 36
@@ -24,8 +30,10 @@ class ObservationSettings:
     @classmethod
     def from_config(cls, config):
         values = config.get('observation_quality', {})
+        if 'min_visible_fraction' in values:
+            raise ValueError('min_visible_fraction 已由 min_observation_score 替代；请删除旧字段，默认最终得分门槛为 0.5')
         result = cls(**{key: values[key] for key in cls.__dataclass_fields__ if key in values})
-        for key in ('min_in_frame_fraction', 'min_visible_fraction'):
+        for key in ('min_in_frame_fraction', 'min_observation_score'):
             value = getattr(result, key)
             if isinstance(value, bool) or not isinstance(value, (float, int)) or not math.isfinite(value) or not 0 < value <= 1:
                 raise ValueError(f'{key} must be finite and in (0, 1]')
@@ -96,6 +104,41 @@ def ray_box_entry(origins, directions, lower, upper):
     return np.where(~outside & (far >= entry), entry, np.inf)
 
 
+def projection_areas(points, width, height):
+    """Convex box silhouette and its image-clipped area, in pixel squared.
+
+    OpenCV supplies only hull indices; all clipping/area arithmetic stays float64
+    to avoid float32 image-edge jitter at the framing threshold.
+    """
+    indices = cv2.convexHull(points.astype(np.float32), returnPoints=False).ravel()
+    polygon = [tuple(point) for point in points[indices]]
+
+    def area(poly):
+        if len(poly) < 3:
+            return 0.0
+        x0, y0 = poly[0]
+        return abs(sum((a[0]-x0)*(b[1]-y0)-(a[1]-y0)*(b[0]-x0)
+                       for a, b in zip(poly[1:-1], poly[2:])))/2
+
+    full = area(polygon)
+    for axis, bound, sign in ((0, 0, 1), (0, width, -1), (1, 0, 1), (1, height, -1)):
+        if not polygon:
+            break
+        clipped = []
+        previous = polygon[-1]
+        prev_inside = sign*(previous[axis]-bound) >= 0
+        for point in polygon:
+            inside = sign*(point[axis]-bound) >= 0
+            if inside != prev_inside:
+                t = (bound-previous[axis])/(point[axis]-previous[axis])
+                clipped.append(tuple(previous[k]+t*(point[k]-previous[k]) for k in (0, 1)))
+            if inside:
+                clipped.append(point)
+            previous, prev_inside = point, inside
+        polygon = clipped
+    return full, min(full, area(polygon))
+
+
 class BoxObserver:
     def __init__(self, camera, objects, settings=None):
         self.camera = camera
@@ -109,45 +152,47 @@ class BoxObserver:
         self.corners = np.array(list(product((0, 1), repeat=3)), dtype=float)
 
     def poses(self, positions, yaws):
-        positions = np.asarray(positions, dtype=float).reshape(-1, 2)
-        yaws = np.asarray(yaws, dtype=float).reshape(-1)
-        if len(positions) != len(yaws):
-            raise ValueError('One yaw per base position required')
-        c, s = np.cos(yaws), np.sin(yaws)
-        rotation = np.zeros((len(yaws), 3, 3))
-        rotation[:, 0, 0] = rotation[:, 1, 1] = c
-        rotation[:, 1, 0] = s
-        rotation[:, 0, 1] = -s
-        rotation[:, 2, 2] = 1
-        origins = np.column_stack((positions, np.zeros(len(yaws)))) + np.einsum('bij,j->bi', rotation, self.camera.offset)
-        return origins, rotation @ self.camera.base_from_optical
+        return camera_poses(self.camera, positions, yaws)
+
+    def envelope(self, target_index, positions, yaws):
+        origins, rotation = self.poses(positions, yaws)
+        low, high = self.lower[target_index], self.upper[target_index]
+        return radial_envelope(self.camera, (low+high)/2,
+                               low+self.corners*(high-low), origins, rotation)
 
     def evaluate(self, target_index, positions, yaws):
         """Return one metric record per pose, refining near qualification thresholds."""
         origins, rotation = self.poses(positions, yaws)
+        low, high = self.lower[target_index], self.upper[target_index]
+        envelopes = radial_envelope(self.camera, (low+high)/2,
+                                    low+self.corners*(high-low), origins, rotation)
         records = []
         # Bound temporary arrays even for fine user-specified sampling.
         for start in range(0, len(origins), 32):
             o, r = origins[start:start+32], rotation[start:start+32]
-            batch = self._evaluate(target_index, o, r, self.settings.sample_grid)
+            envelope = tuple(values[start:start+32] for values in envelopes)
+            batch = self._evaluate(target_index, o, r, self.settings.sample_grid, envelope)
             if self.settings.refinement_grid > self.settings.sample_grid:
                 selected = [i for i, row in enumerate(batch) if row['projectable'] and (
                     abs(row['in_frame_fraction']-self.settings.min_in_frame_fraction) <= .08 or
-                    abs(row['visible_fraction']-self.settings.min_visible_fraction) <= .08 or
+                    abs(row['observation_score']-self.settings.min_observation_score) <= .08 or
                     abs(row['visible_pixels']-self.settings.min_visible_pixels) <= .2*self.settings.min_visible_pixels)]
                 if selected:
-                    refined = self._evaluate(target_index, o[selected], r[selected], self.settings.refinement_grid)
+                    refined = self._evaluate(target_index, o[selected], r[selected], self.settings.refinement_grid,
+                                             tuple(values[selected] for values in envelope))
                     for i, row in zip(selected, refined):
                         batch[i] = row
             records.extend(batch)
         return records
 
-    def _evaluate(self, target_index, origins, rotation, grid_size):
+    def _evaluate(self, target_index, origins, rotation, grid_size, envelope=None):
         cam, settings = self.camera, self.settings
         low, high = self.lower[target_index], self.upper[target_index]
         corners = low + self.corners*(high-low)
         optical = np.einsum('bki,bij->bkj', corners[None, :, :]-origins[:, None, :], rotation)
         distance = np.linalg.norm((low+high)/2-origins, axis=1)
+        radius, near, far, region_ok = (radial_envelope(cam, (low+high)/2, corners, origins, rotation)
+                                      if envelope is None else envelope)
         camera_inside = np.zeros(len(origins), dtype=bool)
         for lo, hi in zip(self.lower, self.upper):
             camera_inside |= np.all((origins >= lo) & (origins <= hi), axis=1)
@@ -155,11 +200,15 @@ class BoxObserver:
         range_ok = (distance >= cam.min_distance-1e-9) & (distance <= cam.max_distance+1e-9)
         records = [dict(qualified=False, projectable=False, in_frame_fraction=0.0,
                         visible_fraction=0.0, visible_pixels=0.0, projected_pixels=0.0,
-                        quality=0.0, center_distance_m=float(d), occluder_ids=[],
+                        quality=0.0, observation_score=0.0, distance_weight=0.0,
+                        horizontal_distance_m=float(radius[i]),
+                        radial_near_m=float(near[i]) if region_ok[i] else None,
+                        radial_far_m=float(far[i]) if region_ok[i] else None,
+                        center_distance_m=float(d), occluder_ids=[],
                         sample_grid=grid_size, reason=('camera_inside_geometry' if inside else
                         'behind_or_crossing_camera_plane' if not ahead else 'distance' if not valid else 'out_of_frame'))
-                   for d, inside, ahead, valid in zip(distance, camera_inside, front, range_ok)]
-        active = np.flatnonzero(front & range_ok & ~camera_inside)
+                   for i, (d, inside, ahead, valid) in enumerate(zip(distance, camera_inside, front, range_ok))]
+        active = np.flatnonzero(front & range_ok & ~camera_inside & region_ok)
         if not len(active):
             return records
         xyz = optical[active]
@@ -167,6 +216,7 @@ class BoxObserver:
         v = cam.fy*xyz[:, :, 1]/xyz[:, :, 2]+cam.cy
         bounds = np.column_stack((u.min(axis=1), v.min(axis=1), u.max(axis=1), v.max(axis=1)))
         overlaps = (bounds[:, 2] > 0) & (bounds[:, 0] < cam.width) & (bounds[:, 3] > 0) & (bounds[:, 1] < cam.height)
+        polygons = np.stack((u, v), axis=-1)[overlaps]
         active, bounds = active[overlaps], bounds[overlaps]
         if not len(active):
             return records
@@ -199,19 +249,24 @@ class BoxObserver:
             blocker[relevant] = np.where(closer, other, blocker[relevant])
         visible = in_frame & (blocker == -1)
         for row, original in enumerate(active):
-            total = int(silhouette[row].sum())
             framed = int(in_frame[row].sum())
             exposed = int(visible[row].sum())
-            cell_pixels = float((bounds[row, 2]-bounds[row, 0])*(bounds[row, 3]-bounds[row, 1])/(grid_size**2))
-            framing = framed/total if total else 0.0
+            # With all corners in front, the solid box silhouette is their
+            # convex hull. Clip it geometrically: sampled framing oscillates at
+            # the 80% gate and can falsely certify a cropped final observation.
+            projected_area, framed_area = projection_areas(polygons[row], cam.width, cam.height)
+            framing = framed_area/projected_area if projected_area else 0.0
             visibility = exposed/framed if framed else 0.0
-            pixels = exposed*cell_pixels
+            pixels = framed_area*visibility
+            weight = float(radial_weight(radius[original], near[original], far[original]))
+            score = weight*visibility
             reason = ('in_frame_fraction' if framing+1e-9 < settings.min_in_frame_fraction else
-                      'visible_fraction' if visibility+1e-9 < settings.min_visible_fraction else
-                      'visible_pixels' if pixels+1e-9 < settings.min_visible_pixels else 'qualified')
+                      'visible_pixels' if pixels+1e-9 < settings.min_visible_pixels else
+                      'observation_score' if score+1e-9 < settings.min_observation_score else 'qualified')
             records[original].update(qualified=reason == 'qualified', projectable=True,
                 in_frame_fraction=framing, visible_fraction=visibility, visible_pixels=pixels,
-                projected_pixels=total*cell_pixels, quality=framing*visibility,
+                projected_pixels=projected_area, quality=framing*visibility,
+                observation_score=score, distance_weight=weight,
                 occluder_ids=[self.ids[i] for i in sorted(set(blocker[row][blocker[row] >= 0].tolist()))],
                 projection_bounds=bounds[row].tolist(), reason=reason)
         return records

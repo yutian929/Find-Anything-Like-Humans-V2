@@ -52,7 +52,7 @@ class BoxObservationTests(unittest.TestCase):
         self.assertAlmostEqual(half['visible_fraction'], .5)
         self.assertAlmostEqual(half['quality'], .5)
         self.assertFalse(half['qualified'])
-        permissive = self.metric([box('half', [1, 0, 0], [2, 1, 2])], camera_config(min_visible_fraction=.4))
+        permissive = self.metric([box('half', [1, 0, 0], [2, 1, 2])], camera_config(min_observation_score=.4))
         self.assertTrue(permissive['qualified'])
         behind = self.metric([box('behind', [5, -1, 0], [6, 1, 2])])
         self.assertEqual(behind['visible_fraction'], 1)
@@ -95,7 +95,7 @@ class BoxObservationTests(unittest.TestCase):
         with self.assertRaises(ValueError): validate_objects([bad])
         with self.assertRaisesRegex(ValueError, 'Mixed'):
             validate_objects([self.target, {'id': 'point', 'position': [0, 0, 0]}])
-        for key, value in [('min_visible_fraction', 0), ('sample_grid', 1),
+        for key, value in [('min_observation_score', 0), ('sample_grid', 1),
                            ('min_visible_pixels', float('nan')), ('refinement_grid', 4)]:
             cfg = camera_config();cfg['observation_quality'][key] = value
             with self.assertRaises(ValueError): ObservationSettings.from_config(cfg)
@@ -137,7 +137,7 @@ class BoxObservationTests(unittest.TestCase):
         self.assertEqual(candidate.supports, expected)
         self.assertNotIn('target', candidate.supports.get(11, {}).get(0, set()))
 
-    def test_votes_prefer_coverage_then_quality_without_summing_directions(self):
+    def test_weighted_votes_deduplicate_directions_and_choose_best_photo(self):
         stations = [Station(i, 1, (0, i), (i, 0)) for i in range(3)]
         candidates = CandidateResult([0, 1, 2], [0, 1],
             {0: {0: {'a'}, 1: {'a'}}, 1: {0: {'a'}}, 2: {0: {'b', 'c'}}}, {},
@@ -166,11 +166,11 @@ class BoxObservationTests(unittest.TestCase):
                 '--save-supports'], text=True, capture_output=True)
             self.assertEqual(run.returncode, 0, run.stderr)
             result = json.loads(output.read_text())
-            self.assertEqual(result['observation_model'], 'aabb_solid_sampled')
+            self.assertEqual(result['observation_model'], 'aabb_weighted_region')
             self.assertEqual(result['status'], 'complete')
             self.assertTrue(result['anchors'][0]['observations'][0]['object_metrics']['target']['qualified'])
             self.assertEqual((folder/'map.json').read_bytes(), before)
-            self.assertTrue(json.loads(output.with_suffix('.supports.json').read_text())['qualities'])
+            self.assertTrue(json.loads(output.with_suffix('.supports.json').read_text())['scores'])
 
 
 if __name__ == '__main__':
