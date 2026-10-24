@@ -10,6 +10,11 @@ from __future__ import annotations
 
 import numpy as np
 
+try:
+    from . import config as settings
+except ImportError:
+    import config as settings
+
 
 def camera_poses(camera, positions, yaws):
     positions = np.asarray(positions, dtype=float).reshape(-1, 2)
@@ -74,13 +79,15 @@ def radial_envelope(camera, center, corners, origins, rotation):
     return radius, near, far, valid
 
 
-def radial_weight(radius, near, far):
-    """1 at the inner boundary, .5 at the outer; a collapsed band gets 1.
+def radial_weight(radius, near, far, inner_weight=None, outer_weight=None):
+    """Linear endpoint weights; a collapsed band gets the inner weight.
 
     Only call for a valid envelope. Clipping absorbs numerical boundary slack;
     it never makes an out-of-region pose eligible.
     """
+    inner_weight = settings.OBSERVATION_DEFAULTS['radial_inner_weight'] if inner_weight is None else inner_weight
+    outer_weight = settings.OBSERVATION_DEFAULTS['radial_outer_weight'] if outer_weight is None else outer_weight
     span = np.asarray(far)-near
     fraction = np.divide(np.asarray(radius)-near, span,
                          out=np.zeros_like(np.asarray(radius), dtype=float), where=span > 1e-9)
-    return 1-.5*np.clip(fraction, 0, 1)
+    return inner_weight-(inner_weight-outer_weight)*np.clip(fraction, 0, 1)

@@ -1,4 +1,4 @@
-"""项目文件路径。更换地图、机器人或相机时，在这里修改对应路径。"""
+"""项目路径与实验默认参数。物理标定、地图和机器人参数仍读取 data/ JSON。"""
 from pathlib import Path
 import json
 
@@ -19,6 +19,24 @@ CAMERA_EXPORT_PATH = OUTPUT_DIR / 'camera.d435i.json'
 
 EDITOR_PAGE = ROOT / 'map_editor.html'
 ANCHOR_VIEWER_TEMPLATE = ROOT / 'anchor_selector.html'
+
+# 观察实验默认值。相机 JSON 的 observation_quality 同名字段优先于这里。
+# 得分 = 距离权重 × 画面内未遮挡比例；入镜、像素面积是另外的硬门槛。
+OBSERVATION_DEFAULTS = {
+    'min_in_frame_fraction': 0.8,   # 最低入镜比例，(0, 1]
+    'min_observation_score': 0.5,   # 最低观察得分，(0, 1]，包含等于门槛
+    'min_visible_pixels': 400.0,    # 最低可见投影面积，px²，必须 > 0
+    'radial_inner_weight': 1.0,     # 观察区域内边界权重
+    'radial_outer_weight': 0.5,     # 外边界权重；0 < 外端 <= 内端 <= 1，线性下降
+    'sample_grid': 12,             # 常规遮挡采样边长，12 表示 12×12
+    'refinement_grid': 36,         # 临界加密边长；整数 [4,128]，不小于常规采样
+}
+
+# 规划实验默认值。方向间隔、求解预算可由同名 CLI 参数覆盖。
+YAW_STEP_DEG = 30.0                # 每站方向间隔，(0,360] 度
+SELECTION_TIME_LIMIT_S = None      # 全部 MILP 调用共享的秒数预算；None 表示不限时
+AUDIT_SAMPLE_GRID = 96            # 最终复核边长，整数 [4,128]；实际不低于 refinement_grid
+MAX_AUDIT_RETRIES = 3             # 高密度复核失败后的重选次数；0 表示直接尝试基线兜底
 
 
 def read_input(path: Path) -> dict:

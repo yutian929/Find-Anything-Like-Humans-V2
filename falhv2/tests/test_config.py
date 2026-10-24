@@ -14,9 +14,77 @@ import anchor_selector
 import regions_extractor
 import config as settings
 from test_anchor_common import config as camera_config
+from observation_model import BoxObserver, ObservationSettings
+from observation_region import radial_weight
+from test_observation_model import box, camera_config as box_camera_config
 
 
 class ConfigTests(unittest.TestCase):
+    def test_config_weights_and_threshold_change_actual_observation(self):
+        cfg = box_camera_config()
+        target = box('a', [3, -.5, .5], [4, .5, 1.5])
+        with patch.dict(settings.OBSERVATION_DEFAULTS,
+                        radial_inner_weight=.6, radial_outer_weight=.6, min_observation_score=.55):
+            row = BoxObserver(anchor_selector.PointCamera(cfg), [target]).evaluate(0, [[0, 0]], [0])[0]
+            self.assertAlmostEqual(row['observation_score'], .6)
+            self.assertTrue(row['qualified'])
+            with patch.dict(settings.OBSERVATION_DEFAULTS, min_observation_score=.65):
+                row = BoxObserver(anchor_selector.PointCamera(cfg), [target]).evaluate(0, [[0, 0]], [0])[0]
+                self.assertFalse(row['qualified'])
+                self.assertEqual(row['reason'], 'observation_score')
+                cfg['observation_quality'].update(radial_inner_weight=.9, radial_outer_weight=.9)
+                row = BoxObserver(anchor_selector.PointCamera(cfg), [target]).evaluate(0, [[0, 0]], [0])[0]
+                self.assertAlmostEqual(row['observation_score'], .9)
+                self.assertTrue(row['qualified'])  # Explicit JSON endpoints override config.py.
+
+    def test_config_radial_weights_preserve_linear_interpolation(self):
+        import numpy as np
+        with patch.dict(settings.OBSERVATION_DEFAULTS, radial_inner_weight=.8, radial_outer_weight=.4):
+            np.testing.assert_allclose(radial_weight(np.array([1, 2, 3]), 1, 3), [.8, .6, .4])
+            self.assertEqual(radial_weight(2, 2, 2), .8)
+
+    def test_config_sampling_and_json_precedence(self):
+        with patch.dict(settings.OBSERVATION_DEFAULTS, sample_grid=8, refinement_grid=16,
+                        min_in_frame_fraction=.9, min_visible_pixels=500):
+            implicit = ObservationSettings.from_config(camera_config())
+            self.assertEqual((implicit.sample_grid, implicit.refinement_grid), (8, 16))
+            self.assertEqual((implicit.min_in_frame_fraction, implicit.min_visible_pixels), (.9, 500))
+            explicit = ObservationSettings.from_config(box_camera_config())
+            self.assertEqual((explicit.sample_grid, explicit.refinement_grid, explicit.min_visible_pixels), (24, 48, 10))
+            observer = BoxObserver(anchor_selector.PointCamera(box_camera_config()), [])
+            with patch.object(settings, 'AUDIT_SAMPLE_GRID', 16):
+                self.assertEqual(anchor_selector._dense_observer(observer, []).settings.sample_grid, 48)
+            with patch.object(settings, 'AUDIT_SAMPLE_GRID', 64):
+                self.assertEqual(anchor_selector._dense_observer(observer, []).settings.sample_grid, 64)
+
+    def test_invalid_experiment_parameters_are_rejected(self):
+        for key, value in [('radial_outer_weight', 1.1), ('radial_inner_weight', .4),
+                           ('min_observation_score', 0), ('sample_grid', True), ('refinement_grid', 8)]:
+            with self.subTest(key=key), patch.dict(settings.OBSERVATION_DEFAULTS, {key: value}):
+                with self.assertRaises(ValueError):
+                    ObservationSettings.from_config(camera_config())
+        for key, value in [('AUDIT_SAMPLE_GRID', 129), ('MAX_AUDIT_RETRIES', -1), ('MAX_AUDIT_RETRIES', True)]:
+            with self.subTest(key=key), patch.object(settings, key, value):
+                with self.assertRaises(ValueError):
+                    anchor_selector._audit_parameters()
+        with patch.object(settings, 'YAW_STEP_DEG', 0):
+            with self.assertRaises(ValueError):
+                anchor_selector.yaw_grid()
+
+    def test_config_planning_defaults_and_cli_overrides_are_exported(self):
+        with tempfile.TemporaryDirectory() as folder:
+            values = self.prepare(Path(folder))
+            with patch.multiple(settings, **values, YAW_STEP_DEG=90,
+                                SELECTION_TIME_LIMIT_S=5, AUDIT_SAMPLE_GRID=64, MAX_AUDIT_RETRIES=0):
+                for args, step, budget in [([], 90, 5), (['--yaw-step-deg', '45', '--selection-time-limit-s', '10'], 45, 10)]:
+                    with patch.object(sys, 'argv', ['anchor_selector.py', *args]), contextlib.redirect_stdout(io.StringIO()):
+                        self.assertEqual(anchor_selector.main(), 0)
+                    result = settings.read_input(values['ANCHOR_PLAN_PATH'])
+                    self.assertEqual(result['configuration']['yaw_step_deg'], step)
+                    self.assertEqual(result['statistics']['yaw_count'], 360//step)
+                    self.assertEqual(result['configuration']['selection_time_limit_s'], budget)
+                    self.assertEqual(result['configuration']['audit'], dict(sample_grid=64, max_retries=0))
+
     def prepare(self, root):
         data = root/'data'
         data.mkdir()

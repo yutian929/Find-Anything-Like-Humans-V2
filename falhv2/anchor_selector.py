@@ -57,8 +57,9 @@ class CandidateResult:
     diagnostics: dict = field(default_factory=dict)
 
 
-def yaw_grid(step_deg: float = 30.0) -> list[float]:
-    if not math.isfinite(step_deg) or not 0 < step_deg <= 360:
+def yaw_grid(step_deg: float | None = None) -> list[float]:
+    step_deg = settings.YAW_STEP_DEG if step_deg is None else step_deg
+    if isinstance(step_deg, bool) or not isinstance(step_deg, (int, float)) or not math.isfinite(step_deg) or not 0 < step_deg <= 360:
         raise ValueError("yaw step must be in (0, 360] degrees")
     return np.deg2rad(np.arange(0.0, 360.0, step_deg)).tolist()
 
@@ -151,7 +152,7 @@ def generate_candidates(
     objects: list[dict],
     camera: PointCamera,
     *,
-    yaw_step_deg: float = 30.0,
+    yaw_step_deg: float | None = None,
     station_indices: list[int] | None = None,
 ) -> CandidateResult:
     """Build weighted supports after height, mount and frustum region screening.
@@ -427,6 +428,21 @@ def _audit_observations(selected, objects, observer):
                 rejected_supports=rejected)
 
 
+def _audit_parameters():
+    grid, retries = settings.AUDIT_SAMPLE_GRID, settings.MAX_AUDIT_RETRIES
+    if isinstance(grid, bool) or not isinstance(grid, int) or not 4 <= grid <= 128:
+        raise ValueError('AUDIT_SAMPLE_GRID must be an integer in [4, 128]')
+    if isinstance(retries, bool) or not isinstance(retries, int) or retries < 0:
+        raise ValueError('MAX_AUDIT_RETRIES must be a nonnegative integer')
+    return dict(sample_grid=grid, max_retries=retries)
+
+
+def _dense_observer(observer, objects):
+    grid = max(_audit_parameters()['sample_grid'], observer.settings.refinement_grid)
+    return BoxObserver(observer.camera, objects, replace(observer.settings,
+        sample_grid=grid, refinement_grid=grid))
+
+
 def _refine_after_audit(selected, candidates, stations, objects, observer, time_limit_s=None):
     """Repair sampled false positives without changing the exported candidate q.
 
@@ -435,11 +451,10 @@ def _refine_after_audit(selected, candidates, stations, objects, observer, time_
     the original proven cost; a refined-pool optimum alone cannot certify it.
     Bound retries and retain the audited baseline when repair is unsuccessful.
     """
-    dense = BoxObserver(observer.camera, objects, replace(observer.settings,
-        sample_grid=max(96, observer.settings.refinement_grid),
-        refinement_grid=max(96, observer.settings.refinement_grid)))
+    parameters = _audit_parameters()
+    dense = _dense_observer(observer, objects)
     initial = _audit_observations(selected, objects, dense)
-    audit = dict(initial=deepcopy(initial), final=initial, repairs=[],
+    audit = dict(initial=deepcopy(initial), final=initial, repairs=[], parameters=parameters,
                  scope='selected_actions_only_not_full_candidate_matrix')
     selected['optimization']['high_density_verification'] = audit
     if initial['status'] == 'passed':
@@ -460,7 +475,7 @@ def _refine_after_audit(selected, candidates, stations, objects, observer, time_
     elapsed = sum(selected['optimization'][stage].get('elapsed_s', 0)
                   for stage in ('stage1', 'stage2'))
     targets = [o['id'] for o in objects]
-    for _ in range(3):
+    for _ in range(parameters['max_retries']):
         for row in audit['final']['rejected_supports']:
             filtered[row['station_index']][row['yaw_index']].discard(row['object_id'])
         # Dense sampling can also add a relation absent from original q. Such a
@@ -520,14 +535,19 @@ def _verify_observations(selected, objects, camera, observer):
         raise ValueError('Final observations failed coverage verification')
 
 
-def plan(scene, robot_config, camera_config, *, yaw_step_deg=30, selection_time_limit_s=None):
+def plan(scene, robot_config, camera_config, *, yaw_step_deg=None, selection_time_limit_s=None):
     """Select object-driven anchors directly from safe regions; no route is built.
 
     Targets are world-frame 3D centers; base positions are (x, y, 0).
     A station may take multiple yaw-directed photos. AABB coverage uses clipped
     framing, sampled occlusion/pixels and radial score; point maps use legacy FOV/range.
     """
-    if selection_time_limit_s is not None and (not math.isfinite(selection_time_limit_s) or selection_time_limit_s <= 0):
+    yaw_step_deg = settings.YAW_STEP_DEG if yaw_step_deg is None else yaw_step_deg
+    selection_time_limit_s = settings.SELECTION_TIME_LIMIT_S if selection_time_limit_s is None else selection_time_limit_s
+    audit_parameters = _audit_parameters()
+    if selection_time_limit_s is not None and (isinstance(selection_time_limit_s, bool)
+            or not isinstance(selection_time_limit_s, (int, float))
+            or not math.isfinite(selection_time_limit_s) or selection_time_limit_s <= 0):
         raise ValueError('selection time limit must be finite and positive')
     objects = validate_objects(scene.get("objects", []))
     camera = PointCamera(camera_config)
@@ -557,9 +577,7 @@ def plan(scene, robot_config, camera_config, *, yaw_step_deg=30, selection_time_
         selected['optimization'].update(lexicographic_optimal=False,
             geometry_verification='new_plan_failed_baseline_passed', fallback_reason=str(exc))
         if observer:
-            dense = BoxObserver(camera, objects, replace(observer.settings,
-                sample_grid=max(96, observer.settings.refinement_grid),
-                refinement_grid=max(96, observer.settings.refinement_grid)))
+            dense = _dense_observer(observer, objects)
             selected['optimization']['high_density_verification']['final'] = _audit_observations(
                 selected, objects, dense)
     result = {
@@ -573,12 +591,13 @@ def plan(scene, robot_config, camera_config, *, yaw_step_deg=30, selection_time_
         'observation_settings': observer.settings.to_dict() if observer else None,
         'object_diagnostics': candidates.diagnostics,
         'selection_rule': 'min_anchor_count_then_photo_count',
-        'score_definition': ('radial_weight_1_to_0.5_times_visible_fraction' if observer else 'legacy_unit_votes'),
+        'score_definition': (f'radial_weight_{observer.settings.radial_inner_weight:g}_to_{observer.settings.radial_outer_weight:g}_times_visible_fraction'
+                             if observer else 'legacy_unit_votes'),
         'region_definition': ('per_bearing_and_yaw_optical_center_distance_and_AABB_frustum_overlap_envelope'
                               if observer else 'legacy_point_no_radial_weight'),
         'uncovered_diagnosis_scope': 'No support in the evaluated discrete station/yaw pool; not continuous-space infeasibility',
         'configuration': {'robot': robot_config, 'camera': camera_config, 'yaw_step_deg': yaw_step_deg,
-                          'selection_time_limit_s': selection_time_limit_s},
+                          'selection_time_limit_s': selection_time_limit_s, 'audit': audit_parameters},
         'statistics': {'safe_regions_and_station_seconds': preprocessing, 'selection_seconds': selection,
                        'region_count': len(regions['regions']), 'safe_station_count': len(stations),
                        **candidates.stats},
@@ -712,9 +731,10 @@ def main():
     parser.add_argument('--scene', type=Path, default=settings.MAP_PATH)
     parser.add_argument('--robot', type=Path, default=settings.ROBOT_PATH)
     parser.add_argument('--camera', type=Path, default=settings.CAMERA_PATH)
-    parser.add_argument('--yaw-step-deg', type=float, default=30, help='底盘拍摄偏航间隔，单位度，默认 30')
+    parser.add_argument('--yaw-step-deg', type=float, default=None,
+                        help=f'底盘拍摄偏航间隔，单位度，默认读取 config.py（{settings.YAW_STEP_DEG}）')
     parser.add_argument('--selection-time-limit-s', type=float, default=None,
-                        help='全部 MILP 调用（含复核重选）的总时间预算；默认不限时，不含观察计算与建模')
+                        help='全部 MILP 调用（含复核重选）的总时间预算；默认读取 config.py，不含观察计算与建模')
     parser.add_argument('--save-supports', action='store_true', help='另存合格支持关系、连续得分及逐物体热力图')
     parser.add_argument('--output', type=Path, default=settings.ANCHOR_PLAN_PATH)
     args = parser.parse_args()

@@ -6,7 +6,7 @@ are not counted. Occlusion estimates are deterministic, not analytic guarantees.
 """
 from __future__ import annotations
 
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, field
 from itertools import product
 import math
 
@@ -14,39 +14,46 @@ import numpy as np
 import cv2
 
 try:
+    from . import config as project_config
     from .observation_region import camera_poses, radial_envelope, radial_weight
 except ImportError:
+    import config as project_config
     from observation_region import camera_poses, radial_envelope, radial_weight
 
 
 @dataclass(frozen=True)
 class ObservationSettings:
-    min_in_frame_fraction: float = 0.8
-    min_observation_score: float = 0.5
-    min_visible_pixels: float = 400.0
-    sample_grid: int = 12
-    refinement_grid: int = 36
+    min_in_frame_fraction: float = field(default_factory=lambda: project_config.OBSERVATION_DEFAULTS['min_in_frame_fraction'])
+    min_observation_score: float = field(default_factory=lambda: project_config.OBSERVATION_DEFAULTS['min_observation_score'])
+    min_visible_pixels: float = field(default_factory=lambda: project_config.OBSERVATION_DEFAULTS['min_visible_pixels'])
+    sample_grid: int = field(default_factory=lambda: project_config.OBSERVATION_DEFAULTS['sample_grid'])
+    refinement_grid: int = field(default_factory=lambda: project_config.OBSERVATION_DEFAULTS['refinement_grid'])
+    radial_inner_weight: float = field(default_factory=lambda: project_config.OBSERVATION_DEFAULTS['radial_inner_weight'])
+    radial_outer_weight: float = field(default_factory=lambda: project_config.OBSERVATION_DEFAULTS['radial_outer_weight'])
 
     @classmethod
     def from_config(cls, config):
         values = config.get('observation_quality', {})
         if 'min_visible_fraction' in values:
-            raise ValueError('min_visible_fraction 已由 min_observation_score 替代；请删除旧字段，默认最终得分门槛为 0.5')
-        result = cls(**{key: values[key] for key in cls.__dataclass_fields__ if key in values})
-        for key in ('min_in_frame_fraction', 'min_observation_score'):
-            value = getattr(result, key)
+            raise ValueError('min_visible_fraction 已由 min_observation_score 替代；请删除旧字段')
+        return cls(**{key: values[key] for key in cls.__dataclass_fields__ if key in values})
+
+    def __post_init__(self):
+        for key in ('min_in_frame_fraction', 'min_observation_score', 'radial_inner_weight', 'radial_outer_weight'):
+            value = getattr(self, key)
             if isinstance(value, bool) or not isinstance(value, (float, int)) or not math.isfinite(value) or not 0 < value <= 1:
                 raise ValueError(f'{key} must be finite and in (0, 1]')
-        if (isinstance(result.min_visible_pixels, bool) or not isinstance(result.min_visible_pixels, (float, int))
-                or not math.isfinite(result.min_visible_pixels) or result.min_visible_pixels <= 0):
+        if self.radial_outer_weight > self.radial_inner_weight:
+            raise ValueError('radial_outer_weight must not exceed radial_inner_weight')
+        if (isinstance(self.min_visible_pixels, bool) or not isinstance(self.min_visible_pixels, (float, int))
+                or not math.isfinite(self.min_visible_pixels) or self.min_visible_pixels <= 0):
             raise ValueError('min_visible_pixels must be finite and positive')
         for key in ('sample_grid', 'refinement_grid'):
-            value = getattr(result, key)
+            value = getattr(self, key)
             if isinstance(value, bool) or not isinstance(value, int) or not 4 <= value <= 128:
                 raise ValueError(f'{key} must be an integer in [4, 128]')
-        if result.refinement_grid < result.sample_grid:
+        if self.refinement_grid < self.sample_grid:
             raise ValueError('refinement_grid must be at least sample_grid')
-        return result
 
     def to_dict(self):
         return asdict(self)
@@ -258,7 +265,8 @@ class BoxObserver:
             framing = framed_area/projected_area if projected_area else 0.0
             visibility = exposed/framed if framed else 0.0
             pixels = framed_area*visibility
-            weight = float(radial_weight(radius[original], near[original], far[original]))
+            weight = float(radial_weight(radius[original], near[original], far[original],
+                                        settings.radial_inner_weight, settings.radial_outer_weight))
             score = weight*visibility
             reason = ('in_frame_fraction' if framing+1e-9 < settings.min_in_frame_fraction else
                       'visible_pixels' if pixels+1e-9 < settings.min_visible_pixels else

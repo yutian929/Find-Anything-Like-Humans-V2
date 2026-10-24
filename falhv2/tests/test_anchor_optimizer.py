@@ -257,6 +257,14 @@ class OptimizerTests(unittest.TestCase):
         self.assertEqual(audit['repair_status'], 'audited_baseline_fallback')
         self.assertEqual(r['selected_cost'], r['baseline_cost'])
 
+    def test_configured_zero_retries_uses_audited_baseline(self):
+        with patch.object(selector.settings, 'MAX_AUDIT_RETRIES', 0):
+            r = self.audit_case()
+        audit = r['optimization']['high_density_verification']
+        self.assertEqual(audit['repairs'], [])
+        self.assertEqual(audit['repair_status'], 'audited_baseline_fallback')
+        self.assertEqual(r['selected_cost'], r['baseline_cost'])
+
     def test_dense_audit_does_not_claim_unverified_baseline_is_safe(self):
         failed = dict(status='failed', rejected_supports=[], uncovered_object_ids=['5'])
         with patch.object(selector, '_audit_observations', side_effect=[failed, failed]):
