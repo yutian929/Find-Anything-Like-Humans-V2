@@ -9,7 +9,7 @@ import unittest
 import numpy as np
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
-from anchor_selector import PointCamera, Station, CandidateResult, generate_candidates, select_anchors, plan
+from anchor_selector import PointCamera, Station, CandidateResult, generate_candidates, select_anchors_greedy as select_anchors, plan
 from observation_model import BoxObserver, ObservationSettings, ray_box_entry, validate_objects
 from test_anchor_common import config
 

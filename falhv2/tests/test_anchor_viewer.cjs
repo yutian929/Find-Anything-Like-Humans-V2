@@ -5,7 +5,7 @@ assert.ok(!template.includes('id="path"'));
 const script=template.match(/<script>\s*([\s\S]*?)<\/script>/)[1];
 function fixture(){
  const a=(index)=>({region_id:1,position:[.5+index,.5],station_index:index,observations:[{yaw_rad:0,object_ids:['o1','o2']}]});
- const method=(n)=>({title:n===1?'物体驱动':'位置驱动',anchors:Array.from({length:n},(_,i)=>a(i)),actions:Array.from({length:n},(_,i)=>({anchor_index:i,yaw_rad:0,object_ids:['o1','o2'],projected:[{id:'o1',u:40,v:20,depth_m:1,distance_m:1,qualified:true},{id:'o2',u:60,v:25,depth_m:2,distance_m:2,qualified:true}]})),candidate_count:3,votes:[[0,2],[1,2]],inverse:{o1:[0,1],o2:[0,1]},uncovered_object_ids:[],generation_seconds:.001,object_heatmaps:{o1:[[0,.9,0,900000],[1,.6,1,600000]],o2:[[0,.5,1,500000],[1,.8,0,800000]]},vote_trace:[{station_index:0,new_object_ids:['o1'],weighted_score:1.4},{station_index:1,new_object_ids:['o2'],weighted_score:.8}]});
+ const method=(n)=>({replay_enabled:true,title:n===1?'物体驱动':'位置驱动',anchors:Array.from({length:n},(_,i)=>a(i)),actions:Array.from({length:n},(_,i)=>({anchor_index:i,yaw_rad:0,object_ids:['o1','o2'],projected:[{id:'o1',u:40,v:20,depth_m:1,distance_m:1,qualified:true},{id:'o2',u:60,v:25,depth_m:2,distance_m:2,qualified:true}]})),candidate_count:3,votes:[[0,2],[1,2]],inverse:{o1:[0,1],o2:[0,1]},uncovered_object_ids:[],generation_seconds:.001,object_heatmaps:{o1:[[0,.9,0,900000],[1,.6,1,600000]],o2:[[0,.5,1,500000],[1,.8,0,800000]]},vote_trace:[{station_index:0,new_object_ids:['o1'],weighted_score:1.4},{station_index:1,new_object_ids:['o2'],weighted_score:.8}]});
  return {scene_name:'test map',grid:{rows:['....','....','....','....'],resolution:1,origin:[0,0]},objects:[{id:'o1',position:[1.5,1.5,.5]},{id:'o2',position:[2.5,2.5,.8]}],camera:{camera:{width:100,height:50}},methods:[method(2)],stations:[[0,.5,.5],[1,1.5,.5]],region_count:1,yaws_rad:[0,Math.PI/2]};
 }
 function start(data){
@@ -71,3 +71,32 @@ assert.match(boxUI.get('qualityInfo').textContent,/得分 0.400.*距离权重 0.
 assert.match(boxUI.get('photoInfo').textContent,/Box 投影外框/);
 assert.equal(boxUI.get('photoChoices').children.length,2);
 console.log('Anchor viewer: station/object/photo selection, drawing, zoom/reset, map picking and empty targets passed.');
+
+// Exact solutions have no replay; switching restores a separate baseline trace.
+const exact=fixture();exact.methods.unshift(structuredClone(exact.methods[0]));
+exact.methods[0].replay_enabled=false;exact.methods[0].vote_trace=[];
+exact.optimization={lexicographic_optimal:true,stage1:{proven_optimal:true,lower_bound:2},stage2:{proven_optimal:true,lower_bound:2,fixed_anchor_count:2}};
+exact.baseline_cost=[3,4];exact.selected_cost=[2,2];exact.selection_method='lexicographic_milp';
+const exactUI=start(exact);
+assert.equal(exactUI.get('replayBar').hidden,true);
+assert.equal(exactUI.get('round').disabled,true);
+assert.match(exactUI.get('optimizationInfo').textContent,/3 站.*2 站.*[\s\S]*均已证明最优/);
+assert.match(exactUI.get('heatTitle').textContent,/全部物体/);
+exactUI.get('method').value=1;exactUI.get('method').onchange();
+assert.equal(exactUI.get('replayBar').hidden,false);
+exactUI.get('round').value=1;exactUI.get('round').oninput();
+assert.equal(vm.runInContext('heatValues.get(0)[0]',exactUI.sandbox),.5);
+exactUI.get('method').value=0;exactUI.get('method').onchange();
+assert.equal(exactUI.get('round').value,0);
+assert.equal(vm.runInContext('heatValues.get(0)[0]',exactUI.sandbox),1.4);
+const limited=structuredClone(exact);limited.optimization.lexicographic_optimal=false;
+limited.optimization.stage1.proven_optimal=false;limited.selection_method='weighted_greedy_fallback';
+assert.match(start(limited).get('optimizationInfo').textContent,/尚未证明最优.*已验证基线/);
+limited.optimization.fallback_reason='uncovered_targets';
+assert.match(start(limited).get('optimizationInfo').textContent,/全覆盖不可行/);
+const audited=structuredClone(exact);
+audited.optimization.high_density_verification={repairs:[{}],final:{status:'passed',sample_grid:96,uncovered_object_ids:[]}};
+assert.match(start(audited).get('optimizationInfo').textContent,/96×96 高密度复核通过；已重选 1 次/);
+audited.optimization.high_density_verification.final={status:'failed',sample_grid:96,uncovered_object_ids:['o2']};
+assert.match(start(audited).get('optimizationInfo').textContent,/高密度复核未通过：缺少 o2/);
+console.log('Lexicographic viewer: proofs, fallback, static heatmap and separate baseline replay passed.');

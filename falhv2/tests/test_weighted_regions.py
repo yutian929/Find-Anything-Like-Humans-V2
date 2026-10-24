@@ -9,7 +9,7 @@ import numpy as np
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from anchor_selector import (CandidateResult, PointCamera, Station, generate_candidates,
-                             object_heatmaps, select_anchors, plan, viewer_data)
+                             object_heatmaps, select_anchors_greedy as select_anchors, plan, viewer_data)
 from observation_model import BoxObserver, ObservationSettings
 from observation_region import camera_poses, radial_envelope, radial_weight
 from test_anchor_common import config

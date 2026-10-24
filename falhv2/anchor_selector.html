@@ -5,23 +5,23 @@
 <title>物体驱动锚点规划</title>
 <style>
 :root{color-scheme:light;font-family:system-ui,-apple-system,"Microsoft YaHei",sans-serif;color:#1e3046;background:#edf2f7}*{box-sizing:border-box}body{margin:0;padding:24px;max-width:1720px;margin:auto}header{display:flex;justify-content:space-between;align-items:center;gap:20px;margin-bottom:16px}h1{font-size:25px;letter-spacing:-.5px;margin:0 0 6px}header p{margin:0;color:#53677f;font-size:13px}.badge{background:#fff3d9;color:#825500;padding:9px 12px;border-radius:8px;font-size:12px;max-width:400px}.layout{display:grid;grid-template-columns:minmax(430px,1fr) 340px;gap:16px}.card{background:white;border:1px solid #dce5ef;border-radius:14px;box-shadow:0 3px 15px #22334a05}.toolbar{padding:14px 18px;border-bottom:1px solid #e6edf5;display:flex;align-items:center;gap:9px;flex-wrap:wrap}select,button{font:inherit;font-size:13px;border:1px solid #cbd8e7;border-radius:7px;padding:8px 10px;background:white;color:#263d56}button{cursor:pointer}button:hover,button.active{background:#e6f3f4;border-color:#07838d}label{font-size:12px;white-space:nowrap;display:inline-flex;gap:4px;align-items:center}.mapbox{height:min(73vh,850px);min-height:490px;position:relative;background:#f8fafc;overflow:hidden;border-radius:0 0 14px 14px}#map{width:100%;height:100%;display:block;touch-action:none;cursor:grab}.hint{position:absolute;bottom:12px;left:14px;background:#ffffffed;padding:8px 10px;border-radius:8px;color:#53677f;font-size:11px;pointer-events:none}.legend{display:flex;gap:13px;font-size:12px;margin:13px 4px;flex-wrap:wrap}.swatch{display:inline-block;width:10px;height:10px;border-radius:3px;margin-right:5px}.side{display:grid;align-content:start;gap:12px}.section{padding:15px}.section h2{font-size:14px;margin:0 0 12px}.stats{display:grid;grid-template-columns:repeat(3,1fr);gap:8px}.metric{background:#f3f7fb;padding:12px 6px;text-align:center;border-radius:8px}.metric strong{font-size:25px;display:block}.metric span{font-size:11px;color:#60738b}.subtle{font-size:12px;color:#60738b;line-height:1.8}.choices{display:flex;gap:6px;flex-wrap:wrap}.choices button{font-size:12px;padding:6px 9px}.details{line-height:1.7;font-size:12px;margin:9px 0;min-height:40px}.photo{width:100%;aspect-ratio:16/9;background:#f2f6fa;border:1px solid #dce5ef;border-radius:7px;display:block}.objects{max-height:210px;overflow:auto;display:flex;gap:5px;flex-wrap:wrap}#detailTitle{margin-top:0}.footnote{font-size:11px;color:#60738b;margin:10px 3px;line-height:1.7}@media(max-width:950px){body{padding:12px}.layout{grid-template-columns:1fr}.mapbox{height:65vh}.side{grid-template-columns:1fr 1fr}.badge{display:none}}@media(max-width:600px){.side{grid-template-columns:1fr}.mapbox{min-height:400px}}
-.heatbar,.heatlegend{padding:10px 18px;display:flex;align-items:center;gap:12px;flex-wrap:wrap;font-size:12px}.heatbar input{flex:1;min-width:100px;max-width:320px}.heatinfo{padding:0 18px 12px;font-size:12px;color:#425b73;min-height:32px}.gradient{width:130px;height:12px;border-radius:4px;background:linear-gradient(90deg,#3979cf,#38afbc,#f3d261,#e76541)}.heatlegend{border-top:1px solid #e6edf5}.toolbar select{max-width:100%}
+.heatbar,.heatlegend{padding:10px 18px;display:flex;align-items:center;gap:12px;flex-wrap:wrap;font-size:12px}#replayBar[hidden]{display:none}.heatbar input{flex:1;min-width:100px;max-width:320px}.heatinfo{padding:0 18px 12px;font-size:12px;color:#425b73;min-height:32px}.gradient{width:130px;height:12px;border-radius:4px;background:linear-gradient(90deg,#3979cf,#38afbc,#f3d261,#e76541)}.heatlegend{border-top:1px solid #e6edf5}.toolbar select{max-width:100%}
 </style>
 </head>
 <body>
 <header><div><h1>锚点规划可视化</h1><p id="sceneInfo"></p></div><div class="badge" id="modelInfo"></div></header>
 <div class="layout">
  <main>
- <div class="card"><div class="toolbar"><select id="method" hidden aria-label="物体驱动"></select><button id="reset">显示全图</button><button id="export">导出地图 PNG</button><label for="heatmap">观察热力图</label><select id="heatmap" aria-label="观察热力图"></select><label><input type="checkbox" id="links" checked>覆盖连线</label><label><input type="checkbox" id="names" checked>物体编号</label></div><div class="heatbar"><label for="round">已完成贪心轮次</label><input type="range" id="round" min="0" max="0" value="0" step="1"><span id="roundInfo"></span></div><div class="heatlegend"><span id="heatTitle"></span><span class="gradient"></span><span id="heatScale"></span></div><div id="heatInfo" class="heatinfo" aria-live="polite"></div><div class="mapbox"><canvas id="map" aria-label="锚点地图"></canvas><div class="hint">滚轮缩放 · 拖动平移 · 点击物体或锚点查看详情</div></div></div>
+ <div class="card"><div class="toolbar"><select id="method" aria-label="规划方案"></select><button id="reset">显示全图</button><button id="export">导出地图 PNG</button><label for="heatmap">观察热力图</label><select id="heatmap" aria-label="观察热力图"></select><label><input type="checkbox" id="links" checked>覆盖连线</label><label><input type="checkbox" id="names" checked>物体编号</label></div><div class="heatbar" id="replayBar"><label for="round">基线已完成贪心轮次</label><input type="range" id="round" min="0" max="0" value="0" step="1"><span id="roundInfo"></span></div><div class="heatlegend"><span id="heatTitle"></span><span class="gradient"></span><span id="heatScale"></span></div><div id="heatInfo" class="heatinfo" aria-live="polite"></div><div class="mapbox"><canvas id="map" aria-label="锚点地图"></canvas><div class="hint">滚轮缩放 · 拖动平移 · 点击物体或锚点查看详情</div></div></div>
  <div class="legend"><span><i class="swatch" style="background:#29394e"></i>导航障碍</span><span><i class="swatch" style="background:#b3bfcc"></i>未知格</span><span><i class="swatch" style="background:#dcece8"></i>安全区域</span><span><i class="swatch" style="background:#11896a"></i>物体 / AABB</span><span><i class="swatch" style="background:#c12798"></i>选中站位</span></div>
  </main>
  <aside class="side">
- <div class="card section"><h2 id="methodTitle"></h2><div class="stats"><div class="metric"><strong id="anchorsCount"></strong><span>站位</span></div><div class="metric"><strong id="photosCount"></strong><span>定向照片</span></div><div class="metric"><strong id="coverageCount"></strong><span>物体覆盖</span></div></div><p class="subtle" id="methodInfo"></p><div class="choices" id="anchorChoices"></div></div>
+ <div class="card section"><h2 id="methodTitle"></h2><div class="stats"><div class="metric"><strong id="anchorsCount"></strong><span>站位</span></div><div class="metric"><strong id="photosCount"></strong><span>定向照片</span></div><div class="metric"><strong id="coverageCount"></strong><span>物体覆盖</span></div></div><p class="subtle" id="methodInfo"></p><p class="subtle" id="optimizationInfo" style="white-space:pre-line"></p><div class="choices" id="anchorChoices"></div></div>
  <div class="card section"><h2 id="detailTitle">站位与拍摄动作</h2><div id="details" class="details"></div><div class="choices" id="photoChoices"></div><p class="subtle" id="photoTitle">相机投影示意（不是实际照片）</p><canvas id="projection" class="photo" aria-label="相机坐标投影示意"></canvas><div class="subtle" id="photoInfo"></div><div class="subtle" id="qualityInfo" style="white-space:pre-line"></div></div>
  <div class="card section"><h2>逐物体检查</h2><div id="objectChoices" class="objects"></div><p class="subtle">点选物体自动显示它的合格观察权重热力图；点击热区可查看该站得分及最佳底盘朝向。</p></div>
  </aside>
 </div>
-<p class="footnote">站位直接来自安全区域，按物体反向支持关系投票选出。未指定起点，当前包含所有安全连通区域；站位编号不代表访问顺序。箭头表示底盘拍摄朝向。热力图只显示通过全部门槛的观察；单物体取最佳方向得分，叠加图只累加尚未覆盖物体。轮次回放是删冗余之前的贪心选点过程，单物体图不随轮次消失。二维导航障碍不作为相机遮挡。</p>
+<p class="footnote">站位来自安全区域；新方案先最小化锚点数，再在该数量下最小化照片数。未指定起点，当前包含所有安全连通区域；站位编号不代表访问顺序。箭头表示底盘拍摄朝向。热力图只显示通过全部门槛的观察；单物体取最佳方向得分，新方案叠加图展示全部物体的观察能力，不表示求解顺序。轮次回放只属于基线的贪心选点过程，单物体图不随轮次消失。二维导航障碍不作为相机遮挡。</p>
 <script id="data" type="application/json">__ANCHOR_DATA__</script>
 <script>
 'use strict';
@@ -33,6 +33,7 @@ const stations=new Map(D.stations.map(s=>[s[0],[s[1],s[2]]])), methods=D.methods
 let methodIndex=0,anchorIndex=0,actionIndex=0,objectId=null,zoom=1,tx=0,ty=0,fit=1,drag=null,moved=false;
 let heatValues=new Map(),heatObject=null,heatRound=0,probeIndex=null;
 const current=()=>methods[methodIndex],action=()=>current().actions[actionIndex];
+const replayEnabled=()=>current().replay_enabled===true;
 const world=(x,y)=>[tx+(x-ox)*fit*zoom,ty+(rows*res-(y-oy))*fit*zoom];
 function point(p){return world(p[0],p[1]);}
 function button(text,callback,active=false){const b=document.createElement('button');b.textContent=text;b.className=active?'active':'';b.onclick=callback;return b;}
@@ -46,11 +47,11 @@ function heatColor(value){
  const x=Math.max(0,Math.min(1,value))*3,i=Math.min(2,Math.floor(x)),t=x-i;
  return 'rgb('+stops[i].map((v,k)=>Math.round(v+(stops[i+1][k]-v)*t)).join(',')+')';
 }
-function completedObjects(){return new Set((current().vote_trace||[]).slice(0,heatRound).flatMap(r=>r.new_object_ids));}
+function completedObjects(){return new Set((replayEnabled()?(current().vote_trace||[]):[]).slice(0,heatRound).flatMap(r=>r.new_object_ids));}
 function buildHeatmap(){
  const m=current(),mode=el('heatmap').value||'total';heatObject=mode.startsWith('object:')?mode.slice(7):null;
- const trace=m.vote_trace||[];heatRound=Math.min(trace.length,Math.max(0,Number(el('round').value)||0));
- el('round').max=trace.length;el('round').value=heatRound;el('round').disabled=mode!=='total';
+ const trace=replayEnabled()?(m.vote_trace||[]):[];heatRound=Math.min(trace.length,Math.max(0,Number(el('round').value)||0));
+ el('round').max=trace.length;el('round').value=heatRound;el('round').disabled=!replayEnabled()||mode!=='total';el('replayBar').hidden=!replayEnabled();
  const done=completedObjects();heatValues=new Map();
  if(heatObject!==null){for(const [i,score,yaw] of m.object_heatmaps?.[heatObject]||[])heatValues.set(i,[score,yaw]);}
  else if(mode==='total'){
@@ -69,9 +70,9 @@ function buildHeatmap(){
   hc.fillStyle=heatColor((score-minimum)/Math.max(1e-9,maximum-minimum));
   hc.fillRect(Math.floor((p[0]-ox)/res),rows-1-Math.floor((p[1]-oy)/res),1,1);
  }
- el('heatTitle').textContent=mode==='none'?'热力图已关闭':heatObject!==null?'物体 '+heatObject+' · 最佳合格方向得分':'未覆盖物体 · 加权总分';
+ el('heatTitle').textContent=mode==='none'?'热力图已关闭':heatObject!==null?'物体 '+heatObject+' · 最佳合格方向得分':(replayEnabled()?'未覆盖物体 · 加权总分':'全部物体 · 观察能力叠加');
  el('heatScale').textContent=mode==='none'?'':`${minimum.toFixed(2)} → ${maximum.toFixed(2)} · 无色区域不贡献有效票`;
- el('roundInfo').textContent=heatObject!==null?'单物体完整分布，不扣除已覆盖任务':`已选 ${heatRound}/${trace.length} 站 · 剩余 ${D.objects.length-done.size} 个目标`;
+ el('roundInfo').textContent=!replayEnabled()?'静态观察能力图，不表示求解顺序':heatObject!==null?'单物体完整分布，不扣除已覆盖任务':`已选 ${heatRound}/${trace.length} 站 · 剩余 ${D.objects.length-done.size} 个目标`;
  showHeatProbe();
 }
 function showHeatProbe(){
@@ -95,7 +96,7 @@ function draw(){const w=canvas.width/(window.devicePixelRatio||1),h=canvas.heigh
  if(el('links').checked){if(objectId){const obj=D.objects.find(o=>o.id===objectId);for(const a of m.anchors)if(a.observations.some(o=>o.object_ids.includes(objectId)))line(a.position,obj.position,'#c12798a0',1.5);}else if(action()){const a=m.anchors[action().anchor_index];for(const id of action().object_ids){const obj=D.objects.find(o=>o.id===id);line(a.position,obj.position,'#c1279880',1.3);}}}
  for(const obj of D.objects){if(obj.aabb){const a=point([obj.aabb.min[0],obj.aabb.max[1]]),b=point([obj.aabb.max[0],obj.aabb.min[1]]);ctx.fillStyle='#ed9e2730';ctx.fillRect(a[0],a[1],b[0]-a[0],b[1]-a[1]);ctx.strokeStyle=obj.id===objectId?'#f6b229':'#a7762b';ctx.strokeRect(a[0],a[1],b[0]-a[0],b[1]-a[1]);}const missing=m.uncovered_object_ids.includes(obj.id),highlight=obj.id===objectId;circle(obj.position,highlight?8:5,missing?'#df4855':'#11896a',highlight?'#f6b229':'white');if(el('names').checked)text(obj.id+(obj.aabb?` ${obj.aabb.min[2].toFixed(2)}～${obj.aabb.max[2].toFixed(2)}m`:''),obj.position,'#17563f');}
  m.anchors.forEach((a,i)=>{const [x,y]=point(a.position);ctx.save();ctx.translate(x,y);ctx.rotate(Math.PI/4);ctx.fillStyle=i===anchorIndex?'#c12798':'#983a84';ctx.fillRect(-6,-6,12,12);ctx.strokeStyle='white';ctx.strokeRect(-6,-6,12,12);ctx.restore();for(const photo of a.observations)arrow(a.position,photo.yaw_rad,i===anchorIndex?'#c12798':'#a04b8a80');text('A'+(i+1),a.position,'#a60075');});
- const next=(m.vote_trace||[])[heatRound];if(el('heatmap').value==='total'&&next){const p=stations.get(next.station_index);circle(p,13,null,'#172d42');text('下一轮选点',p,'#172d42');}
+ const next=(m.vote_trace||[])[heatRound];if(replayEnabled()&&el('heatmap').value==='total'&&next){const p=stations.get(next.station_index);circle(p,13,null,'#172d42');text('下一轮选点',p,'#172d42');}
  if(probeIndex!==null){const p=stations.get(probeIndex),row=heatValues.get(probeIndex);circle(p,9,null,'#172d42');if(heatObject!==null&&row&&D.yaws_rad?.[row[1]]!==undefined)arrow(p,D.yaws_rad[row[1]],'#172d42');}
 }
 const reasonText={qualified:'合格',observation_score:'加权得分不足',in_frame_fraction:'入镜不足',visible_pixels:'可见像素不足',distance:'距离不合格',out_of_frame:'未入镜',camera_inside_geometry:'相机位于物体内',behind_or_crossing_camera_plane:'目标在相机后方或跨越相机平面'};
@@ -115,7 +116,23 @@ function renderProjection(){
 }
 function selectAnchor(i){anchorIndex=i;objectId=null;el('heatmap').value='total';probeIndex=null;actionIndex=current().actions.findIndex(a=>a.anchor_index===i);update();}
 function selectObject(id){objectId=id;el('heatmap').value='object:'+id;probeIndex=null;const i=current().actions.findIndex(a=>a.object_ids.includes(id));actionIndex=i>=0?i:(current().actions.length?0:-1);anchorIndex=actionIndex>=0?current().actions[actionIndex].anchor_index:-1;update();}
-function update(){const m=current();el('methodTitle').textContent=m.title;el('anchorsCount').textContent=m.anchors.length;el('photosCount').textContent=m.actions.length;el('coverageCount').textContent=D.objects.length?`${D.objects.length-m.uncovered_object_ids.length}/${D.objects.length}`:'—';el('methodInfo').textContent=`评估 ${m.candidate_count.toLocaleString()} 个位置 · 本次候选生成 ${(m.generation_seconds*1000).toFixed(1)} ms`;
+function optimizationText(){
+ if(!D.optimization)return '';
+ const o=D.optimization,s1=o.stage1||{},s2=o.stage2||{};
+ const costs=`基线 ${D.baseline_cost[0]} 站 / ${D.baseline_cost[1]} 张 → 当前 ${D.selected_cost[0]} 站 / ${D.selected_cost[1]} 张`;
+ if(replayEnabled())return costs+'\n此视图为加权贪心基线，回放不属于新求解器。';
+ let proof=o.lexicographic_optimal?'有限候选池内：锚点数和照片数均已证明最优':s1.proven_optimal&&s1.objective===D.selected_cost[0]?'锚点数已证明最优；照片数尚未证明全局最优':'尚未证明最优';
+ if(o.geometry_verification==='new_plan_failed_baseline_passed')proof='新方案几何复核失败，不宣称当前方案最优';
+ if(o.fallback_reason==='empty_targets')proof='没有目标，无需拍摄';
+ if(o.fallback_reason==='uncovered_targets')proof='存在无合格支持的目标，全覆盖不可行';
+ if((D.selection_method||'').includes('fallback'))proof+='；当前使用已验证基线';
+ const audit=o.high_density_verification, finalAudit=audit?.final;
+ if(finalAudit)proof+=finalAudit.status==='passed'?`\n最终动作 ${finalAudit.sample_grid}×${finalAudit.sample_grid} 高密度复核通过`:`\n高密度复核未通过：缺少 ${(finalAudit.uncovered_object_ids||[]).join('、')}；当前覆盖数字仅对应原观察采样`;
+ if(audit?.repairs?.length)proof+=`；已重选 ${audit.repairs.length} 次`;
+ const bound=(stage)=>stage.lower_bound==null?'—':stage.lower_bound.toFixed(3);
+ return costs+'\n'+proof+`\n锚点下界 ${bound(s1)} · 照片下界 ${bound(s2)}（固定 ${s2.fixed_anchor_count??'—'} 站）`;
+}
+function update(){const m=current();el('optimizationInfo').textContent=optimizationText();el('methodTitle').textContent=m.title;el('anchorsCount').textContent=m.anchors.length;el('photosCount').textContent=m.actions.length;el('coverageCount').textContent=D.objects.length?`${D.objects.length-m.uncovered_object_ids.length}/${D.objects.length}`:'—';el('methodInfo').textContent=`评估 ${m.candidate_count.toLocaleString()} 个位置 · 本次候选生成 ${(m.generation_seconds*1000).toFixed(1)} ms`;
  el('anchorChoices').replaceChildren(...m.anchors.map((a,i)=>button('站位 A'+(i+1),()=>selectAnchor(i),i===anchorIndex&&!objectId)));
  if(objectId){const obj=D.objects.find(o=>o.id===objectId),cover=m.anchors.map((a,i)=>a.observations.some(o=>o.object_ids.includes(objectId))?'A'+(i+1):null).filter(Boolean);el('detailTitle').textContent='物体 '+objectId;el('details').textContent=`位置 (${obj.position.map(v=>v.toFixed(2)).join(', ')}) m；支持它的候选站位 ${(m.inverse[objectId]||[]).length} 个；最终观察站位：${cover.join('、')||'无'}。`;
  if(obj.aabb)el('details').textContent+=` 底部 ${obj.aabb.min[2].toFixed(2)} m，顶部 ${obj.aabb.max[2].toFixed(2)} m。`;
@@ -126,8 +143,8 @@ function update(){const m=current();el('methodTitle').textContent=m.title;el('an
  el('objectChoices').replaceChildren(...D.objects.map(o=>button(o.id,()=>selectObject(o.id),o.id===objectId)));
  el('photoTitle').textContent=action()?`投影示意 · 底盘偏航 ${(action().yaw_rad*180/Math.PI).toFixed(0)}°（不是照片）`:'投影示意（不是照片）';buildHeatmap();draw();renderProjection();}
 methods.forEach((m,i)=>{const option=document.createElement('option');option.value=i;option.textContent=m.title;el('method').append(option);});
-el('method').onchange=()=>{methodIndex=Number(el('method').value);anchorIndex=0;actionIndex=0;objectId=null;update();};
-for(const [value,label] of [['total','全部未覆盖物体叠加'],...D.objects.map(o=>['object:'+o.id,'物体 '+o.id]),['none','关闭热力图']]){const option=document.createElement('option');option.value=value;option.textContent=label;el('heatmap').append(option);}
+el('method').onchange=()=>{methodIndex=Number(el('method').value);anchorIndex=0;actionIndex=0;objectId=null;probeIndex=null;heatRound=0;el('round').value=0;el('heatmap').value='total';update();};
+for(const [value,label] of [['total','物体观察能力叠加'],...D.objects.map(o=>['object:'+o.id,'物体 '+o.id]),['none','关闭热力图']]){const option=document.createElement('option');option.value=value;option.textContent=label;el('heatmap').append(option);}
 el('heatmap').value='total';
 el('heatmap').onchange=()=>{const value=el('heatmap').value;if(value.startsWith('object:'))selectObject(value.slice(7));else{objectId=null;probeIndex=null;update();}};
 el('round').oninput=()=>{probeIndex=null;buildHeatmap();draw();};

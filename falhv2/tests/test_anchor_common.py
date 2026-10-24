@@ -10,7 +10,7 @@ import numpy as np
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from anchor_selector import PointCamera, Station, CandidateResult, validate_objects
-from anchor_selector import select_anchors
+from anchor_selector import select_anchors_greedy as select_anchors
 
 
 def exact_minimum_station_count(candidates: CandidateResult, object_ids: list[str]) -> int | None:

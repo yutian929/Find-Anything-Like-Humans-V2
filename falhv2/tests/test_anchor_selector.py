@@ -27,14 +27,14 @@ class AnchorSelectorTests(unittest.TestCase):
     def test_candidates_cover_all_safe_cells_and_actions_retain_camera_coverage(self):
         scene = self.scene()
         result, regions, stations, candidates = plan(scene, self.robot(), config())
-        self.assertEqual(result['method'], 'object_driven_weighted')
+        self.assertEqual(result['method'], 'object_driven_lexicographic')
         self.assertEqual(result['status'], 'complete')
         expected = {(r['id'], tuple(cell)) for r in regions['regions'] for cell in r['cells']}
         self.assertEqual({(s.region_id, s.cell) for s in stations}, expected)
         self.assertEqual(len(stations), len(expected))
         self.assertEqual([(s.region_id, s.cell) for s in stations], sorted(expected))
         self.assertEqual(stations, stations_from_regions(regions))
-        self.assertEqual(result['schema_version'], 4)
+        self.assertEqual(result['schema_version'], 5)
         self.assertEqual(result['navigation'], 'not_planned')
         self.assertEqual(result['start_reachability'], 'not_evaluated_no_start_pose')
         self.assertNotIn('path_length_m', result['statistics'])
@@ -99,7 +99,7 @@ class AnchorSelectorTests(unittest.TestCase):
             page = output.with_suffix('.html').read_text()
             payload = re.search(r'<script id="data" type="application/json">(.*?)</script>', page, re.S)[1]
             data = json.loads(payload)
-            self.assertEqual(len(data['methods']), 1)
+            self.assertEqual(len(data['methods']), 2)
             self.assertEqual(data['region_count'], 1)
             self.assertNotIn('path_length_m', data)
             self.assertNotIn('id="path"', page)

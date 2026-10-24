@@ -1,12 +1,13 @@
-"""加权锚点规划：安全区域 → 位姿约束观察区域 → 热力图叠加 → 定向拍摄。
+"""锚点规划：安全区域 → 合格观察关系 → 最少锚点 → 最少定向照片。
 
 默认从 data/map_aabb.json、data/robot.json 和 data/camera.d435i.json 读取输入，
-输出离线 JSON / HTML / SVG，包含逐物体观察热力图与动态选点回放。
-完整 AABB 使用距离权重乘未遮挡比例，旧点地图保留单位票兼容模式。
+输出离线 JSON / HTML / SVG，包含逐物体观察热力图及独立的旧贪心基线回放。
+完整 AABB 使用距离权重乘未遮挡比例判定合格，旧点地图保留视场/距离模式。
 """
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
+from copy import deepcopy
 import math
 from typing import Sequence
 
@@ -18,6 +19,7 @@ from time import perf_counter
 import argparse
 import heapq
 import json
+import logging
 
 from scipy.spatial import cKDTree
 
@@ -26,11 +28,13 @@ try:
     from .observation_model import BoxObserver, validate_objects
     from . import config as settings
     from .config import read_input
+    from .anchor_optimizer import optimize
 except ImportError:
     from regions_extractor import plan as find_safe_regions, diagnostic_svg, PlanningError
     from observation_model import BoxObserver, validate_objects
     import config as settings
     from config import read_input
+    from anchor_optimizer import optimize
 
 ROOT = settings.ROOT
 
@@ -261,7 +265,7 @@ def generate_candidates(
         },
     )
 
-def select_anchors(candidates: CandidateResult, stations: list[Station], object_ids: list[str]) -> dict:
+def select_anchors_greedy(candidates: CandidateResult, stations: list[Station], object_ids: list[str]) -> dict:
     targets = set(object_ids)
     station_by_id = {station.index: station for station in stations}
     station_sets = {i: set().union(*directions.values()) for i, directions in candidates.supports.items()}
@@ -358,26 +362,146 @@ def select_anchors(candidates: CandidateResult, stations: list[Station], object_
             "start_reachability": "not_evaluated_no_start_pose"}
 
 
-def plan(scene, robot_config, camera_config, *, yaw_step_deg=30):
-    """Select object-driven anchors directly from safe regions; no route is built.
+def _assemble_anchors(actions, candidates, stations):
+    by_id = {s.index: s for s in stations}
+    anchors = []
+    for i in sorted({i for i, _ in actions}):
+        s = by_id[i]
+        observations = []
+        for si, y in actions:
+            if si != i:
+                continue
+            ids = sorted(candidates.supports[i][y])
+            observations.append(dict(yaw_index=y, yaw_rad=candidates.yaws[y], object_ids=ids,
+                score_by_object={o: candidates.scores.get(i, {}).get(y, {}).get(o, 1.0) for o in ids}))
+        anchors.append(dict(station_index=i, region_id=s.region_id, position=list(s.position),
+                            cell=list(s.cell), observations=observations))
+    return anchors
 
-    Targets are world-frame 3D centers; base positions are (x, y, 0).
-    A station may take multiple yaw-directed photos. AABB coverage uses clipped
-    framing, sampled occlusion/pixels and radial score; point maps use legacy FOV/range.
+
+def select_anchors(candidates: CandidateResult, stations: list[Station], object_ids: list[str],
+                   *, time_limit_s=None) -> dict:
+    """Keep the weighted baseline; minimize station count before photo count."""
+    if len({s.index for s in stations}) != len(stations):
+        raise ValueError('Station IDs must be unique')
+    if not set(candidates.supports) <= set(candidates.station_indices):
+        raise ValueError('Support station is outside the declared candidate pool')
+    if any(not isinstance(y, int) or not 0 <= y < len(candidates.yaws)
+           for ds in candidates.supports.values() for y in ds):
+        raise ValueError('Invalid support yaw index')
+    baseline = select_anchors_greedy(candidates, stations, object_ids)
+    keys = [(a['station_index'], o['yaw_index']) for a in baseline['anchors'] for o in a['observations']]
+    solution = optimize(candidates.supports, object_ids, keys, time_limit_s=time_limit_s)
+    selected = deepcopy(baseline)
+    selected['vote_trace'] = []  # The integer solution has no greedy selection order.
+    anchors = _assemble_anchors(solution['actions'], candidates, stations)
+    selected.update({k: v for k, v in solution.items() if k != 'actions'})
+    selected.update(anchors=anchors, anchor_count=solution['selected_cost'][0],
+                    photo_count=solution['selected_cost'][1], baseline=baseline,
+                    objective_order=['anchor_count', 'photo_count'],
+                    optimality=('finite_pool_lexicographic_optimal'
+                        if solution['optimization']['lexicographic_optimal'] else 'not_proven'))
+    return selected
+
+
+def _audit_observations(selected, objects, observer):
+    """Audit all target/photo pairs; keep dense metrics separate from original q."""
+    covered, rejected = set(), []
+    started = perf_counter()
+    count = 0
+    for anchor in selected['anchors']:
+        for action in anchor['observations']:
+            metrics = {o['id']: observer.evaluate(i, [anchor['position']], [action['yaw_rad']])[0]
+                       for i, o in enumerate(objects)}
+            action['high_density_object_metrics'] = metrics
+            visible = {oid for oid, row in metrics.items() if row['qualified']}
+            covered.update(visible)
+            count += len(objects)
+            rejected.extend(dict(station_index=anchor['station_index'], yaw_index=action['yaw_index'],
+                                 object_id=oid) for oid in sorted(set(action['object_ids']) - visible))
+    missing = set(o['id'] for o in objects) - covered
+    return dict(status='passed' if not missing else 'failed',
+                sample_grid=observer.settings.sample_grid, object_pose_pairs=count,
+                elapsed_s=perf_counter()-started, covered_object_ids=sorted(covered),
+                uncovered_object_ids=sorted(missing),
+                rejected_supports=rejected)
+
+
+def _refine_after_audit(selected, candidates, stations, objects, observer, time_limit_s=None):
+    """Repair sampled false positives without changing the exported candidate q.
+
+    Only reject relations disproved by a denser final-action audit. A repaired
+    solution inherits an original-pool optimality certificate only at exactly
+    the original proven cost; a refined-pool optimum alone cannot certify it.
+    Bound retries and retain the audited baseline when repair is unsuccessful.
     """
-    objects = validate_objects(scene.get("objects", []))
-    camera = PointCamera(camera_config)
-    yaw_grid(yaw_step_deg)
-    started = perf_counter()
-    regions = find_safe_regions(scene, robot_config)
-    stations = stations_from_regions(regions)
-    preprocessing = perf_counter() - started
-    candidates = generate_candidates(stations, objects, camera, yaw_step_deg=yaw_step_deg)
-    started = perf_counter()
-    selected = select_anchors(candidates, stations, [o['id'] for o in objects])
-    selection = perf_counter() - started
-    observer = BoxObserver(camera, objects) if objects and 'aabb' in objects[0] else None
-    # Recompute every final action independently of the sparse candidate relation.
+    dense = BoxObserver(observer.camera, objects, replace(observer.settings,
+        sample_grid=max(96, observer.settings.refinement_grid),
+        refinement_grid=max(96, observer.settings.refinement_grid)))
+    initial = _audit_observations(selected, objects, dense)
+    audit = dict(initial=deepcopy(initial), final=initial, repairs=[],
+                 scope='selected_actions_only_not_full_candidate_matrix')
+    selected['optimization']['high_density_verification'] = audit
+    if initial['status'] == 'passed':
+        return selected
+    logging.getLogger(__name__).info('Dense audit found uncovered targets %s; checking baseline and repairing',
+                                     initial['uncovered_object_ids'])
+    baseline = selected['baseline']
+    baseline_audit = _audit_observations(baseline, objects, dense)
+    audit['baseline'] = baseline_audit
+    if selected['status'] != 'complete' or baseline_audit['status'] != 'passed':
+        audit['repair_status'] = 'no_audited_complete_baseline'
+        return selected
+    original_cost = list(selected['selected_cost'])
+    original_proven = selected['optimization']['lexicographic_optimal']
+    filtered = deepcopy(candidates.supports)
+    baseline_actions = [(a['station_index'], o['yaw_index'])
+                        for a in baseline['anchors'] for o in a['observations']]
+    elapsed = sum(selected['optimization'][stage].get('elapsed_s', 0)
+                  for stage in ('stage1', 'stage2'))
+    targets = [o['id'] for o in objects]
+    for _ in range(3):
+        for row in audit['final']['rejected_supports']:
+            filtered[row['station_index']][row['yaw_index']].discard(row['object_id'])
+        # Dense sampling can also add a relation absent from original q. Such a
+        # relation cannot serve as the feasible incumbent of this deletion-only
+        # model; retain the separately audited original baseline instead.
+        if set().union(*(filtered[i][y] for i, y in baseline_actions)) != set(targets):
+            break
+        remaining = None if time_limit_s is None else time_limit_s-elapsed
+        if remaining is not None and remaining <= 0:
+            break
+        solution = optimize(filtered, targets, baseline_actions, time_limit_s=remaining)
+        elapsed += sum(solution['optimization'][stage].get('elapsed_s', 0)
+                       for stage in ('stage1', 'stage2'))
+        audit['repairs'].append(dict(selected_cost=solution['selected_cost'],
+                                     optimization=solution['optimization']))
+        selected['anchors'] = _assemble_anchors(solution['actions'], candidates, stations)
+        selected.update(selected_cost=solution['selected_cost'],
+            anchor_count=solution['selected_cost'][0], photo_count=solution['selected_cost'][1],
+            selection_method='lexicographic_milp_audited_repair')
+        audit['final'] = _audit_observations(selected, objects, dense)
+        if audit['final']['status'] == 'passed':
+            audit['repair_status'] = 'passed'
+            break
+    if audit['final']['status'] != 'passed':
+        selected.update(deepcopy(baseline))
+        selected.update(vote_trace=[], selected_cost=selected['baseline_cost'],
+                        selection_method='weighted_greedy_audited_fallback')
+        audit.update(final=baseline_audit, repair_status='audited_baseline_fallback')
+    proven = original_proven and selected['selected_cost'] == original_cost
+    selected['optimization']['lexicographic_optimal'] = proven
+    audit['original_pool_certificate_preserved'] = proven
+    if not proven:
+        selected['optimization']['fallback_reason'] = 'audit_changed_solution_without_original_pool_certificate'
+    selected['optimality'] = 'finite_pool_lexicographic_optimal' if proven else 'not_proven'
+    selected['comparison_to_baseline'] = ('improved' if tuple(selected['selected_cost']) <
+                                           tuple(selected['baseline_cost']) else 'equal')
+    return selected
+
+
+def _verify_observations(selected, objects, camera, observer):
+    """Independently recompute every final action, including baseline actions."""
     actual = set()
     for anchor in selected['anchors']:
         for action in anchor['observations']:
@@ -394,8 +518,52 @@ def plan(scene, robot_config, camera_config, *, yaw_step_deg=30):
             actual.update(visible)
     if actual != set(selected['covered_object_ids']):
         raise ValueError('Final observations failed coverage verification')
+
+
+def plan(scene, robot_config, camera_config, *, yaw_step_deg=30, selection_time_limit_s=None):
+    """Select object-driven anchors directly from safe regions; no route is built.
+
+    Targets are world-frame 3D centers; base positions are (x, y, 0).
+    A station may take multiple yaw-directed photos. AABB coverage uses clipped
+    framing, sampled occlusion/pixels and radial score; point maps use legacy FOV/range.
+    """
+    if selection_time_limit_s is not None and (not math.isfinite(selection_time_limit_s) or selection_time_limit_s <= 0):
+        raise ValueError('selection time limit must be finite and positive')
+    objects = validate_objects(scene.get("objects", []))
+    camera = PointCamera(camera_config)
+    yaw_grid(yaw_step_deg)
+    started = perf_counter()
+    regions = find_safe_regions(scene, robot_config)
+    stations = stations_from_regions(regions)
+    preprocessing = perf_counter() - started
+    candidates = generate_candidates(stations, objects, camera, yaw_step_deg=yaw_step_deg)
+    started = perf_counter()
+    selected = select_anchors(candidates, stations, [o['id'] for o in objects],
+                              time_limit_s=selection_time_limit_s)
+    observer = BoxObserver(camera, objects) if objects and 'aabb' in objects[0] else None
+    if observer:
+        selected = _refine_after_audit(selected, candidates, stations, objects, observer,
+                                       selection_time_limit_s)
+    selection = perf_counter() - started
+    _verify_observations(selected['baseline'], objects, camera, observer)
+    try:
+        _verify_observations(selected, objects, camera, observer)
+        selected['optimization']['geometry_verification'] = 'passed'
+    except ValueError as exc:
+        selected.update(deepcopy(selected['baseline']))
+        selected.update(vote_trace=[], selection_method='weighted_greedy_fallback',
+                        selected_cost=selected['baseline_cost'], comparison_to_baseline='equal',
+                        optimality='not_proven')
+        selected['optimization'].update(lexicographic_optimal=False,
+            geometry_verification='new_plan_failed_baseline_passed', fallback_reason=str(exc))
+        if observer:
+            dense = BoxObserver(camera, objects, replace(observer.settings,
+                sample_grid=max(96, observer.settings.refinement_grid),
+                refinement_grid=max(96, observer.settings.refinement_grid)))
+            selected['optimization']['high_density_verification']['final'] = _audit_observations(
+                selected, objects, dense)
     result = {
-        'schema_version': 4, 'method': 'object_driven_weighted',
+        'schema_version': 5, 'method': 'object_driven_lexicographic',
         'candidate_scope': 'all_safe_cell_centers_in_all_regions',
         'station_order': 'region_id_row_column',
         'scene_name': scene.get('name', 'unnamed'),
@@ -404,12 +572,13 @@ def plan(scene, robot_config, camera_config, *, yaw_step_deg=30):
                               if observer else '3D point centers; FOV and Euclidean distance; occlusion and appearance not evaluated'),
         'observation_settings': observer.settings.to_dict() if observer else None,
         'object_diagnostics': candidates.diagnostics,
-        'selection_rule': 'sum_of_best_qualified_scores_then_new_object_count',
+        'selection_rule': 'min_anchor_count_then_photo_count',
         'score_definition': ('radial_weight_1_to_0.5_times_visible_fraction' if observer else 'legacy_unit_votes'),
         'region_definition': ('per_bearing_and_yaw_optical_center_distance_and_AABB_frustum_overlap_envelope'
                               if observer else 'legacy_point_no_radial_weight'),
         'uncovered_diagnosis_scope': 'No support in the evaluated discrete station/yaw pool; not continuous-space infeasibility',
-        'configuration': {'robot': robot_config, 'camera': camera_config, 'yaw_step_deg': yaw_step_deg},
+        'configuration': {'robot': robot_config, 'camera': camera_config, 'yaw_step_deg': yaw_step_deg,
+                          'selection_time_limit_s': selection_time_limit_s},
         'statistics': {'safe_regions_and_station_seconds': preprocessing, 'selection_seconds': selection,
                        'region_count': len(regions['regions']), 'safe_station_count': len(stations),
                        **candidates.stats},
@@ -422,7 +591,7 @@ def object_heatmaps(candidates, object_ids):
     """Sparse per-object maxima: [station, score, yaw, integer_vote_units].
 
     Keep full precision in exports. Aggregate voting/heatmaps round each object's
-    station contribution to micro-units identically to select_anchors().
+    station contribution to micro-units identically to the greedy baseline.
     """
     maps = {identifier: [] for identifier in object_ids}
     for station, directions in sorted(candidates.supports.items()):
@@ -477,18 +646,20 @@ def render_svg(scene,regions,result,stations,candidates):
 def viewer_data(scene, camera_config, result, regions, stations, candidates):
     camera = PointCamera(camera_config)
     methods = []
-    actions=[]
-    for anchor_index,anchor in enumerate(result['anchors']):
-        for action in anchor['observations']:
-            projected=[]
-            for obj in scene.get('objects',[]):
-                u,v,z,d=camera.project(np.array([anchor['position']]),np.array([action['yaw_rad']]),obj['position'])
-                projected.append({'id':obj['id'],'u':float(u[0]) if math.isfinite(u[0]) else None,
-                    'v':float(v[0]) if math.isfinite(v[0]) else None,'depth_m':float(z[0]),'distance_m':float(d[0]),
-                    'qualified':obj['id'] in action['object_ids'],
-                    'metrics':action.get('object_metrics', {}).get(obj['id'])})
-            actions.append({'anchor_index':anchor_index,'yaw_rad':action['yaw_rad'],
-                            'object_ids':action['object_ids'],'projected':projected})
+    def projected_actions(anchors):
+        actions=[]
+        for anchor_index,anchor in enumerate(anchors):
+            for action in anchor['observations']:
+                projected=[]
+                for obj in scene.get('objects',[]):
+                    u,v,z,d=camera.project(np.array([anchor['position']]),np.array([action['yaw_rad']]),obj['position'])
+                    projected.append({'id':obj['id'],'u':float(u[0]) if math.isfinite(u[0]) else None,
+                        'v':float(v[0]) if math.isfinite(v[0]) else None,'depth_m':float(z[0]),'distance_m':float(d[0]),
+                        'qualified':obj['id'] in action['object_ids'],
+                        'metrics':action.get('object_metrics', {}).get(obj['id'])})
+                actions.append({'anchor_index':anchor_index,'yaw_rad':action['yaw_rad'],
+                                'object_ids':action['object_ids'],'projected':projected})
+        return actions
     inverse={obj['id']:[] for obj in scene.get('objects',[])}
     heatmaps = object_heatmaps(candidates, inverse)
     totals = defaultdict(int)
@@ -496,14 +667,20 @@ def viewer_data(scene, camera_config, result, regions, stations, candidates):
         for index, score, _, units in entries:
             inverse[obj].append(index)
             totals[index] += units
-    methods.append({'title':'物体观察权重叠加','anchors':result['anchors'],'actions':actions,
-        'candidate_count':len(candidates.station_indices),
-        'votes':[[index, units/1_000_000] for index, units in sorted(totals.items())],
-        'inverse':inverse, 'object_heatmaps':heatmaps, 'vote_trace':result['vote_trace'],
-        'uncovered_object_ids':result['uncovered_object_ids'],
-        'generation_seconds':result['statistics']['generation_seconds']})
+    for title, selection, replay in [('最少锚点 / 最少照片', result, False),
+                                      ('基线：加权贪心', result['baseline'], True)]:
+        methods.append({'title': title, 'anchors': selection['anchors'],
+            'actions': projected_actions(selection['anchors']), 'replay_enabled': replay,
+            'candidate_count': len(candidates.station_indices),
+            'votes': [[index, units/1_000_000] for index, units in sorted(totals.items())],
+            'inverse': inverse, 'object_heatmaps': heatmaps,
+            'vote_trace': selection['vote_trace'] if replay else [],
+            'uncovered_object_ids': selection['uncovered_object_ids'],
+            'generation_seconds': result['statistics']['generation_seconds']})
     return {'scene_name':scene.get('name','unnamed'),'grid':scene['grid'],'objects':scene.get('objects',[]),
     'camera':camera_config,'methods':methods,
+    'optimization':result['optimization'], 'selection_method':result['selection_method'],
+    'baseline_cost':result['baseline_cost'], 'selected_cost':result['selected_cost'],
     'observation_model':result['observation_model'],'observation_settings':result['observation_settings'],
     'object_diagnostics':result['object_diagnostics'],
     'yaws_rad':candidates.yaws,
@@ -530,21 +707,27 @@ def save_supports(destination, scene, stations, candidates):
 
 
 def main():
+    logging.basicConfig(level=logging.INFO, format='%(message)s')
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--scene', type=Path, default=settings.MAP_PATH)
     parser.add_argument('--robot', type=Path, default=settings.ROBOT_PATH)
     parser.add_argument('--camera', type=Path, default=settings.CAMERA_PATH)
     parser.add_argument('--yaw-step-deg', type=float, default=30, help='底盘拍摄偏航间隔，单位度，默认 30')
+    parser.add_argument('--selection-time-limit-s', type=float, default=None,
+                        help='全部 MILP 调用（含复核重选）的总时间预算；默认不限时，不含观察计算与建模')
     parser.add_argument('--save-supports', action='store_true', help='另存合格支持关系、连续得分及逐物体热力图')
     parser.add_argument('--output', type=Path, default=settings.ANCHOR_PLAN_PATH)
     args = parser.parse_args()
     try:
         if args.output.suffix.lower() != '.json':
             raise ValueError('--output must have a .json suffix')
+        if args.selection_time_limit_s is not None and (not math.isfinite(args.selection_time_limit_s) or args.selection_time_limit_s <= 0):
+            raise ValueError('--selection-time-limit-s must be finite and positive')
         scene = read_input(args.scene)
         robot = read_input(args.robot)
         camera = read_input(args.camera)
-        result, regions, stations, candidates = plan(scene, robot, camera, yaw_step_deg=args.yaw_step_deg)
+        result, regions, stations, candidates = plan(scene, robot, camera, yaw_step_deg=args.yaw_step_deg,
+                                                       selection_time_limit_s=args.selection_time_limit_s)
         payload = json.dumps(viewer_data(scene, camera, result, regions, stations, candidates),
                              ensure_ascii=False, allow_nan=False, separators=(',', ':'))
         payload = payload.replace('<', '\\u003c').replace('>', '\\u003e').replace('&', '\\u0026')
@@ -557,7 +740,10 @@ def main():
             save_supports(args.output.with_suffix('.supports.json'), scene, stations, candidates)
     except (ValueError, OSError, KeyError, TypeError, PlanningError) as exc:
         parser.exit(2, f'锚点规划失败：{exc}\n')
-    print(json.dumps({k: result[k] for k in ('status', 'anchor_count', 'photo_count', 'coverage_fraction', 'uncovered_object_ids')}, ensure_ascii=False, indent=2))
+    print(json.dumps({k: result[k] for k in ('status', 'anchor_count', 'photo_count', 'coverage_fraction', 'uncovered_object_ids', 'baseline_cost', 'selected_cost', 'optimality')}, ensure_ascii=False, indent=2))
+    if 'high_density_verification' in result['optimization']:
+        audit = result['optimization']['high_density_verification']
+        print(f"高密度复核：{audit['final']['status']}；重选次数：{len(audit['repairs'])}；缺口：{audit['final']['uncovered_object_ids']}")
     print(f'锚点计划：{args.output}；交互页面：{args.output.with_suffix(".html")}')
     return 0
 
