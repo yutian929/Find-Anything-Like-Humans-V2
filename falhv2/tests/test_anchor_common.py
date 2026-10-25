@@ -9,7 +9,8 @@ import unittest
 import numpy as np
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
-from anchor_selector import PointCamera, Station, CandidateResult, validate_objects
+from observation_model import PointCamera, validate_objects
+from anchor_candidates import Station, CandidateResult
 from anchor_selector import select_anchors_greedy as select_anchors
 
 

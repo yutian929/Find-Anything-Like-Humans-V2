@@ -12,7 +12,9 @@ import numpy as np
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
-from anchor_selector import plan, PointCamera, stations_from_regions
+from main import plan
+from observation_model import PointCamera
+from anchor_candidates import stations_from_regions
 from test_anchor_common import config
 
 
@@ -90,9 +92,9 @@ class AnchorSelectorTests(unittest.TestCase):
             for name, data in [('scene', scene), ('robot', self.robot()), ('camera', config())]:
                 (folder/f'{name}.json').write_text(json.dumps(data))
             output = folder/'anchor_plan.json'
-            run = subprocess.run([sys.executable, '-B', str(ROOT/'anchor_selector.py'),
+            run = subprocess.run([sys.executable, '-B', str(ROOT/'main.py'),
                 '--scene', str(folder/'scene.json'), '--robot', str(folder/'robot.json'),
-                '--camera', str(folder/'camera.json'), '--output', str(output), '--save-supports'],
+                '--camera', str(folder/'camera.json'), '--output', str(output)],
                 capture_output=True, text=True)
             self.assertEqual(run.returncode, 0, run.stderr)
             self.assertEqual(json.loads(output.read_text())['status'], 'complete')

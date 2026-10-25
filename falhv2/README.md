@@ -2,6 +2,15 @@
 
 本目录实现从地图构建、安全区域提取、观察锚点选择，到视觉采集与找物验证的各阶段功能。本 README 记录运行环境、已实现模块的用法及后续任务入口。
 
+准备好 `data/` 中的地图、机器人和相机配置后，在仓库根目录执行：
+
+```bash
+conda activate test
+python -B falhv2/main.py
+```
+
+统一入口一次完成安全区域提取、观察候选计算、基线与两阶段优化、复核重选和导出。默认生成 `outputs/safe_regions.json`、`safe_regions.svg`、`anchor_plan.json`、`anchor_plan.html`、`anchor_plan.svg`、`anchor_plan.supports.json`，无需先运行其他模块。地图编辑器和真机相机标定仍是独立的输入准备工具。
+
 研究定义与算法依据见[锚点选择研究记录（含旧版路径约束方案）](../docs/falhv2/path_constrained_anchor_selection_v0_20261013.md)；实施进度和验收要求见[研究路线与交接](../docs/falhv2/research_roadmap_and_handoff.md)。
 
 观察模型与旧加权贪心规则见[锚点选择改进说明](../docs/falhv2/anchor_selection_refine.md)：安装位姿约束观察区域、连续权重和逐物体热力图。当前选点采用下述两阶段整数优化。[旧版锚点选取图解](../docs/falhv2/anchor_selection_explained_20261019.md)保留了改进前的七张示意图和运行案例。
@@ -90,9 +99,13 @@ falhv2/
 ├── map_editor.py                # 地图编辑器启动入口
 ├── regions_extractor.py              # A1：安全格中心与四连通区域
 ├── camera_parameters.py         # D435i 相机标定导出
-├── anchor_selector.py            # A2/A3：物体驱动候选、求解与导出
+├── main.py                      # 统一入口：配置、全链路调度与导出调用
+├── anchor_candidates.py         # 安全站位、方向枚举、完整 supports/scores 与热图
+├── anchor_selector.py           # 加权贪心基线、调用优化器与锚点结果组装
 ├── anchor_optimizer.py           # 两阶段整数优化与可行解兜底
-├── observation_model.py          # 实心 AABB 投影采样、遮挡比例与质量门槛
+├── anchor_verification.py       # 高密度复核、删边重选与原模型复核兜底
+├── anchor_export.py             # JSON、HTML、SVG 与候选支持关系导出
+├── observation_model.py          # 相机投影、实心 AABB 遮挡采样与质量门槛
 ├── observation_region.py         # 安装位姿与视场约束的径向范围、距离权重
 ├── anchor_selector.html           # 离线交互展示模板
 ├── config.py                    # 地图、机器人、相机及输出文件路径
@@ -106,9 +119,14 @@ falhv2/
 │   ├── safe_regions.svg         # A1 安全区域诊断图
 │   ├── anchor_plan.json         # 锚点、拍摄方向与覆盖缺口
 │   ├── anchor_plan.html         # 可直接打开的离线交互页面
-│   └── anchor_plan.svg          # 静态诊断图
+│   ├── anchor_plan.svg          # 静态诊断图
+│   └── anchor_plan.supports.json # 完整候选关系、得分和热图
 └── tests/                       # 编辑器与规划器测试
 ```
+
+`main.plan(scene, robot_config, camera_config, ...)` 是不写文件的 Python 调用入口，返回 `(result, regions, stations, candidates)`。`main.main(argv=None)` 处理 CLI 和输出。安全区域只计算一次，并直接传给候选生成与导出；优化器接收完整合格候选关系及贪心基线，不局限于基线选出的站位。复核仍共享原 MILP 时间预算，输出 schema 和算法规则保持不变。
+
+原 `anchor_selector.plan()` 和脚本入口保留转发兼容；新代码应使用 `main.plan()`。原先复核相关的私有函数已迁到 `anchor_verification.py`，候选与观察接口分别位于 `anchor_candidates.py`、`observation_model.py`。
 
 ## 地图编辑器
 
@@ -232,10 +250,10 @@ python -B falhv2/camera_parameters.py --list-modes
 
 ## A2/A3：物体驱动锚点规划
 
-在仓库根目录运行下一步入口：
+在仓库根目录运行统一入口：
 
 ```bash
-python -B falhv2/anchor_selector.py
+python -B falhv2/main.py
 ```
 
 默认输入与 A1 一致：读取 `data/map_aabb.json`、`data/robot.json`，相机读取 `data/camera.d435i.json`。脚本内部调用 A1 重新计算安全区域并直接生成站位，不读取已有规划输出，因此可独立运行。无需机器人起始位姿、起终点或指定锚点数量。
@@ -243,15 +261,14 @@ python -B falhv2/anchor_selector.py
 也可显式指定编辑器保存的地图和配置：
 
 ```bash
-python -B falhv2/anchor_selector.py \
+python -B falhv2/main.py \
   --scene falhv2/data/map_aabb.json \
   --robot falhv2/data/robot.json \
   --camera falhv2/data/camera.d435i.json \
-  --output falhv2/outputs/anchor_plan.json \
-  --save-supports
+  --output falhv2/outputs/anchor_plan.json
 ```
 
-在 `falhv2` 目录内可以直接运行 `python -B anchor_selector.py`。`--yaw-step-deg` 设置底盘拍摄方向间隔，默认 30°，即每站检查 12 个方向。相机安装高度和俯仰固定，底盘可原地转向。
+在 `falhv2` 目录内可以直接运行 `python -B main.py`，在仓库根目录也支持 `python -B -m falhv2.main`。`--yaw-step-deg` 设置底盘拍摄方向间隔，默认 30°，即每站检查 12 个方向。相机安装高度和俯仰固定，底盘可原地转向。
 
 ### 处理流程
 
@@ -296,12 +313,13 @@ python -B falhv2/anchor_selector.py \
 
 | 文件 | 内容 |
 |---|---|
+| `outputs/safe_regions.json` / `safe_regions.svg` | 本次规划中计算的安全区域与诊断图，无需另跑 A1 |
 | `outputs/anchor_plan.json` | 站位编号、区域、格坐标、底盘偏航（弧度）、每张照片覆盖的物体 ID、逐物体比例与遮挡原因、最佳已检查候选诊断、缺口、配置与耗时 |
 | `outputs/anchor_plan.html` | 自包含离线页面；新旧方案及证明状态、逐物体热力图、静态叠加图和独立基线回放、点击安全站位查看得分和最佳朝向；支持缩放、平移、投影检查和地图 PNG 导出 |
 | `outputs/anchor_plan.svg` | 静态地图、初始加权总分、锚点与拍摄方向 |
-| `outputs/anchor_plan.supports.json` | 加 `--save-supports` 导出合格关系、连续 `scores` 和 `object_heatmaps`；方向键为 `yaws_rad` 的索引，未列出的项无有效贡献 |
+| `outputs/anchor_plan.supports.json` | 默认导出合格关系、连续 `scores` 和 `object_heatmaps`；方向键为 `yaws_rad` 的索引，未列出的项无有效贡献 |
 
-修改 `--output` 后，其余文件使用相同文件名主干。直接双击生成的 HTML 即可离线查看或转发，无需启动服务；`anchor_selector.html` 是模板，查看结果应打开 outputs 中的页面。
+默认输出路径由 `config.py` 管理。使用其他 `--output`（例如 `/tmp/run/plan.json`）时，锚点附件使用相同主干，安全区域另存为 `/tmp/run/plan.safe_regions.json` 和 `plan.safe_regions.svg`，不会写回默认目录。`--no-save-supports` 可跳过候选关系导出；原 `--save-supports` 参数仍可使用。直接双击生成的 HTML 即可离线查看或转发，无需启动服务；`anchor_selector.html` 是模板，查看结果应打开 outputs 中的页面。
 
 在“观察热力图”中选择具体物体，或直接点击地图物体/右侧物体按钮，显示该物体每个安全站位的最佳合格得分，色标从实际观察得分门槛到 1，默认是 0.5～1。切到“基线：加权贪心”的“物体观察能力叠加”后，拖动轮次条查看已覆盖物体撤票后的分布；总分色标保持初始尺度，便于比较。回放记录的是删冗余之前的贪心过程，不代表导航顺序。单物体图不随回放轮次消失。无色格表示未通过全部条件，不代表未检查。
 
@@ -343,6 +361,8 @@ node falhv2/tests/test_anchor_viewer.cjs
 ```
 
 Python 测试另覆盖两阶段字典序目标、独立动作子集穷举、限时/异常兜底、几何复核、高密度缺口修复及最优性证明的适用范围。原加权贪心测试显式验证旧基线。Python 测试覆盖安全区域、相机几何、俯仰与径向范围解析核对、预筛与独立投影对照、内外边界得分、0.5 合格门槛、加权动态贪心、几何裁切入镜比例、热力图与最终动作得分一致性、覆盖缺口及 CLI 导出。Node.js 测试覆盖编辑器、单物体热图、叠加扣票、轮次回放和最佳朝向展示。新求解器重点测试可运行 `python -B -m unittest discover -s falhv2/tests -p 'test_anchor_optimizer.py' -v`。
+
+统一入口测试另覆盖零参数运行的完整输出、A1 只计算一次、配置路径与输入文件保持、从其他工作目录运行脚本、包入口、旧入口兼容，以及自定义输出文件名不会被安全区域文件覆盖。
 
 ## 后续模块维护
 

@@ -9,7 +9,10 @@ import unittest
 import numpy as np
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
-from anchor_selector import PointCamera, Station, CandidateResult, generate_candidates, select_anchors_greedy as select_anchors, plan
+from observation_model import PointCamera
+from anchor_candidates import Station, CandidateResult, generate_candidates
+from anchor_selector import select_anchors_greedy as select_anchors
+from main import plan
 from observation_model import BoxObserver, ObservationSettings, ray_box_entry, validate_objects
 from test_anchor_common import config
 
@@ -161,7 +164,7 @@ class BoxObservationTests(unittest.TestCase):
                 (folder/f'{name}.json').write_text(json.dumps(value))
             before = (folder/'map.json').read_bytes()
             output = folder/'plan.json'
-            run = subprocess.run([sys.executable, '-B', str(root/'anchor_selector.py'), '--scene', str(folder/'map.json'),
+            run = subprocess.run([sys.executable, '-B', str(root/'main.py'), '--scene', str(folder/'map.json'),
                 '--robot', str(folder/'robot.json'), '--camera', str(folder/'camera.json'), '--output', str(output),
                 '--save-supports'], text=True, capture_output=True)
             self.assertEqual(run.returncode, 0, run.stderr)

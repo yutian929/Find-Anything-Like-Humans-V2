@@ -11,6 +11,8 @@ import numpy as np
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 import anchor_optimizer as solver
 import anchor_selector as selector
+import anchor_verification as verification
+import main as pipeline
 
 
 def instance(supports, scores=None, targets=None):
@@ -183,8 +185,8 @@ class OptimizerTests(unittest.TestCase):
                  'objects': [{'id': 'a', 'position': [2, 2, 0]}]}
         from test_anchor_common import config
         robot = {'robot': {'footprint_width_m': .2, 'footprint_length_m': .2, 'safety_margin_m': 0}}
-        with patch.object(selector, '_verify_observations', side_effect=[None, ValueError('geometry mismatch')]):
-            r, *_ = selector.plan(scene, robot, config())
+        with patch.object(verification, 'verify_observations', side_effect=[None, ValueError('geometry mismatch')]):
+            r, *_ = pipeline.plan(scene, robot, config())
         self.assertEqual(r['selected_cost'], r['baseline_cost'])
         self.assertEqual(r['anchors'], r['baseline']['anchors'])
         self.assertFalse(r['optimization']['lexicographic_optimal'])
@@ -206,8 +208,8 @@ class OptimizerTests(unittest.TestCase):
             oid = targets[index]
             return [{'qualified': oid in supports[station][0] and not (station == 1 and oid == '5')}]
         dense = SimpleNamespace(settings=SimpleNamespace(sample_grid=96), evaluate=evaluate)
-        with patch.object(selector, 'BoxObserver', return_value=dense):
-            result = selector._refine_after_audit(selected, c, stations,
+        with patch.object(verification, 'BoxObserver', return_value=dense):
+            result = verification.refine_after_audit(selected, c, stations,
                 [{'id': oid} for oid in targets], SimpleNamespace(camera=None, settings=settings), time_limit_s)
         self.assertEqual(c.supports[1][0], set('125'))  # Original heatmap/supports stay intact.
         return result
@@ -240,7 +242,7 @@ class OptimizerTests(unittest.TestCase):
 
     def test_dense_audit_does_not_ignore_uncovered_original_targets(self):
         dense = SimpleNamespace(settings=SimpleNamespace(sample_grid=96))
-        audit = selector._audit_observations({'anchors': [], 'covered_object_ids': []},
+        audit = verification.audit_observations({'anchors': [], 'covered_object_ids': []},
                                              [{'id': 'missing'}], dense)
         self.assertEqual(audit['status'], 'failed')
         self.assertEqual(audit['uncovered_object_ids'], ['missing'])
@@ -249,7 +251,7 @@ class OptimizerTests(unittest.TestCase):
         failed = dict(status='failed', rejected_supports=[
             dict(station_index=1, yaw_index=0, object_id='5')], uncovered_object_ids=['5'])
         passed = dict(status='passed', rejected_supports=[], uncovered_object_ids=[])
-        with patch.object(selector, '_audit_observations',
+        with patch.object(verification, 'audit_observations',
                           side_effect=[failed, passed, failed, failed, failed]):
             r = self.audit_case()
         audit = r['optimization']['high_density_verification']
@@ -258,7 +260,7 @@ class OptimizerTests(unittest.TestCase):
         self.assertEqual(r['selected_cost'], r['baseline_cost'])
 
     def test_configured_zero_retries_uses_audited_baseline(self):
-        with patch.object(selector.settings, 'MAX_AUDIT_RETRIES', 0):
+        with patch.object(verification.settings, 'MAX_AUDIT_RETRIES', 0):
             r = self.audit_case()
         audit = r['optimization']['high_density_verification']
         self.assertEqual(audit['repairs'], [])
@@ -267,7 +269,7 @@ class OptimizerTests(unittest.TestCase):
 
     def test_dense_audit_does_not_claim_unverified_baseline_is_safe(self):
         failed = dict(status='failed', rejected_supports=[], uncovered_object_ids=['5'])
-        with patch.object(selector, '_audit_observations', side_effect=[failed, failed]):
+        with patch.object(verification, 'audit_observations', side_effect=[failed, failed]):
             r = self.audit_case()
         audit = r['optimization']['high_density_verification']
         self.assertEqual(audit['repair_status'], 'no_audited_complete_baseline')

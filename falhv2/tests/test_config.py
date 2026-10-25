@@ -10,7 +10,10 @@ import unittest
 from unittest.mock import patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
-import anchor_selector
+import main as pipeline
+import anchor_verification as verification
+from anchor_candidates import yaw_grid
+from observation_model import PointCamera
 import regions_extractor
 import config as settings
 from test_anchor_common import config as camera_config
@@ -25,15 +28,15 @@ class ConfigTests(unittest.TestCase):
         target = box('a', [3, -.5, .5], [4, .5, 1.5])
         with patch.dict(settings.OBSERVATION_DEFAULTS,
                         radial_inner_weight=.6, radial_outer_weight=.6, min_observation_score=.55):
-            row = BoxObserver(anchor_selector.PointCamera(cfg), [target]).evaluate(0, [[0, 0]], [0])[0]
+            row = BoxObserver(PointCamera(cfg), [target]).evaluate(0, [[0, 0]], [0])[0]
             self.assertAlmostEqual(row['observation_score'], .6)
             self.assertTrue(row['qualified'])
             with patch.dict(settings.OBSERVATION_DEFAULTS, min_observation_score=.65):
-                row = BoxObserver(anchor_selector.PointCamera(cfg), [target]).evaluate(0, [[0, 0]], [0])[0]
+                row = BoxObserver(PointCamera(cfg), [target]).evaluate(0, [[0, 0]], [0])[0]
                 self.assertFalse(row['qualified'])
                 self.assertEqual(row['reason'], 'observation_score')
                 cfg['observation_quality'].update(radial_inner_weight=.9, radial_outer_weight=.9)
-                row = BoxObserver(anchor_selector.PointCamera(cfg), [target]).evaluate(0, [[0, 0]], [0])[0]
+                row = BoxObserver(PointCamera(cfg), [target]).evaluate(0, [[0, 0]], [0])[0]
                 self.assertAlmostEqual(row['observation_score'], .9)
                 self.assertTrue(row['qualified'])  # Explicit JSON endpoints override config.py.
 
@@ -51,11 +54,11 @@ class ConfigTests(unittest.TestCase):
             self.assertEqual((implicit.min_in_frame_fraction, implicit.min_visible_pixels), (.9, 500))
             explicit = ObservationSettings.from_config(box_camera_config())
             self.assertEqual((explicit.sample_grid, explicit.refinement_grid, explicit.min_visible_pixels), (24, 48, 10))
-            observer = BoxObserver(anchor_selector.PointCamera(box_camera_config()), [])
+            observer = BoxObserver(PointCamera(box_camera_config()), [])
             with patch.object(settings, 'AUDIT_SAMPLE_GRID', 16):
-                self.assertEqual(anchor_selector._dense_observer(observer, []).settings.sample_grid, 48)
+                self.assertEqual(verification.dense_observer(observer, []).settings.sample_grid, 48)
             with patch.object(settings, 'AUDIT_SAMPLE_GRID', 64):
-                self.assertEqual(anchor_selector._dense_observer(observer, []).settings.sample_grid, 64)
+                self.assertEqual(verification.dense_observer(observer, []).settings.sample_grid, 64)
 
     def test_invalid_experiment_parameters_are_rejected(self):
         for key, value in [('radial_outer_weight', 1.1), ('radial_inner_weight', .4),
@@ -66,10 +69,10 @@ class ConfigTests(unittest.TestCase):
         for key, value in [('AUDIT_SAMPLE_GRID', 129), ('MAX_AUDIT_RETRIES', -1), ('MAX_AUDIT_RETRIES', True)]:
             with self.subTest(key=key), patch.object(settings, key, value):
                 with self.assertRaises(ValueError):
-                    anchor_selector._audit_parameters()
+                    verification.audit_parameters()
         with patch.object(settings, 'YAW_STEP_DEG', 0):
             with self.assertRaises(ValueError):
-                anchor_selector.yaw_grid()
+                yaw_grid()
 
     def test_config_planning_defaults_and_cli_overrides_are_exported(self):
         with tempfile.TemporaryDirectory() as folder:
@@ -77,8 +80,8 @@ class ConfigTests(unittest.TestCase):
             with patch.multiple(settings, **values, YAW_STEP_DEG=90,
                                 SELECTION_TIME_LIMIT_S=5, AUDIT_SAMPLE_GRID=64, MAX_AUDIT_RETRIES=0):
                 for args, step, budget in [([], 90, 5), (['--yaw-step-deg', '45', '--selection-time-limit-s', '10'], 45, 10)]:
-                    with patch.object(sys, 'argv', ['anchor_selector.py', *args]), contextlib.redirect_stdout(io.StringIO()):
-                        self.assertEqual(anchor_selector.main(), 0)
+                    with patch.object(sys, 'argv', ['main.py', *args]), contextlib.redirect_stdout(io.StringIO()):
+                        self.assertEqual(pipeline.main(), 0)
                     result = settings.read_input(values['ANCHOR_PLAN_PATH'])
                     self.assertEqual(result['configuration']['yaw_step_deg'], step)
                     self.assertEqual(result['statistics']['yaw_count'], 360//step)
@@ -113,8 +116,8 @@ class ConfigTests(unittest.TestCase):
                     with patch.object(sys, 'argv', ['regions_extractor.py']), contextlib.redirect_stdout(io.StringIO()):
                         self.assertEqual(regions_extractor.main(), 0)
                     (outputs/'map.json').write_text('invalid old output')
-                    with patch.object(sys, 'argv', ['anchor_selector.py']), contextlib.redirect_stdout(io.StringIO()):
-                        self.assertEqual(anchor_selector.main(), 0)
+                    with patch.object(sys, 'argv', ['main.py']), contextlib.redirect_stdout(io.StringIO()):
+                        self.assertEqual(pipeline.main(), 0)
                     result = settings.read_input(outputs/'anchor_plan.json')
                     self.assertEqual(result['scene_name'], 'persistent input')
                     self.assertEqual(result['covered_object_ids'], ['target'])
@@ -129,14 +132,14 @@ class ConfigTests(unittest.TestCase):
             actual_map = values['MAP_PATH']
             values['MAP_PATH'] = root/'missing.json'
             with patch.multiple(settings, **values):
-                with patch.object(sys, 'argv', ['anchor_selector.py']), contextlib.redirect_stderr(io.StringIO()) as error:
+                with patch.object(sys, 'argv', ['main.py']), contextlib.redirect_stderr(io.StringIO()) as error:
                     with self.assertRaises(SystemExit) as failure:
-                        anchor_selector.main()
+                        pipeline.main()
                     self.assertEqual(failure.exception.code, 2)
                     self.assertIn('config.py', error.getvalue())
                 self.assertFalse(values['OUTPUT_DIR'].exists())
-                with patch.object(sys, 'argv', ['anchor_selector.py', '--scene', str(actual_map)]), contextlib.redirect_stdout(io.StringIO()):
-                    self.assertEqual(anchor_selector.main(), 0)
+                with patch.object(sys, 'argv', ['main.py', '--scene', str(actual_map)]), contextlib.redirect_stdout(io.StringIO()):
+                    self.assertEqual(pipeline.main(), 0)
 
 
 if __name__ == '__main__':
