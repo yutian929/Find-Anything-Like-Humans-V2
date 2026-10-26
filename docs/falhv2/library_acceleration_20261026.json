@@ -1,0 +1,426 @@
+{
+  "date": "2026-10-26",
+  "baseline_commit": "df0a8df",
+  "environment": "conda test",
+  "versions": {
+    "python": "3.10.19",
+    "numpy": "1.26.4",
+    "scipy": "1.15.3",
+    "opencv": "4.10.0",
+    "shapely": "2.1.2",
+    "open3d": "0.19.0"
+  },
+  "input_sha256": {
+    "map_aabb.json": "ce7e2b9a78def092b7a89bbab82c2a08b9f2683d3c82e2b581c2fdef5de855b8",
+    "robot.json": "4616f1de03e61224927c735d907d2aeca9279e9f868e1689a013fc359f245c0d",
+    "camera.d435i.json": "446db06fe2bdf61a4df335574219b49324c604c99d26796db826024521716ebe",
+    "map_point.json": "1c402ec42d884ada47feed833a2fd80e993500199db88fc9e219cb02c6e59ada"
+  },
+  "runs": {
+    "baseline-1": {
+      "label": "baseline-1",
+      "python": "/home/hri/miniconda3/envs/test/bin/python",
+      "wall_s": 35.3734335990157,
+      "generation_s": 26.019523467984982,
+      "selection_s": 7.949610976036638,
+      "support_field_equal": {
+        "schema_version": true,
+        "station_order": true,
+        "scores": true,
+        "object_heatmaps": true,
+        "heatmap_fields": true,
+        "object_points": true,
+        "yaws_rad": true,
+        "evaluated_station_indices": true,
+        "positive_stations": true,
+        "supports": true
+      },
+      "plan_field_equal": {
+        "anchors": true,
+        "object_diagnostics": true,
+        "baseline": true,
+        "anchor_count": true,
+        "photo_count": true,
+        "covered_object_ids": true,
+        "optimality": true
+      },
+      "cost": [
+        4,
+        10
+      ],
+      "audit": "passed"
+    },
+    "final-1": {
+      "label": "final-1",
+      "python": "/home/hri/miniconda3/envs/test/bin/python",
+      "wall_s": 23.16326968197245,
+      "generation_s": 14.029617719003,
+      "selection_s": 7.885012259008363,
+      "support_field_equal": {
+        "schema_version": true,
+        "station_order": true,
+        "scores": true,
+        "object_heatmaps": true,
+        "heatmap_fields": true,
+        "object_points": true,
+        "yaws_rad": true,
+        "evaluated_station_indices": true,
+        "positive_stations": true,
+        "supports": true
+      },
+      "plan_field_equal": {
+        "anchors": false,
+        "object_diagnostics": false,
+        "baseline": false,
+        "anchor_count": true,
+        "photo_count": true,
+        "covered_object_ids": true,
+        "optimality": true
+      },
+      "cost": [
+        4,
+        10
+      ],
+      "audit": "passed"
+    },
+    "baseline-2": {
+      "label": "baseline-2",
+      "python": "/home/hri/miniconda3/envs/test/bin/python",
+      "wall_s": 35.388844890054315,
+      "generation_s": 26.021490414976142,
+      "selection_s": 7.991467112093233,
+      "support_field_equal": {
+        "schema_version": true,
+        "station_order": true,
+        "scores": true,
+        "object_heatmaps": true,
+        "heatmap_fields": true,
+        "object_points": true,
+        "yaws_rad": true,
+        "evaluated_station_indices": true,
+        "positive_stations": true,
+        "supports": true
+      },
+      "plan_field_equal": {
+        "anchors": true,
+        "object_diagnostics": true,
+        "baseline": true,
+        "anchor_count": true,
+        "photo_count": true,
+        "covered_object_ids": true,
+        "optimality": true
+      },
+      "cost": [
+        4,
+        10
+      ],
+      "audit": "passed"
+    },
+    "final-2": {
+      "label": "final-2",
+      "python": "/home/hri/miniconda3/envs/test/bin/python",
+      "wall_s": 23.094795827986673,
+      "generation_s": 14.001002948964015,
+      "selection_s": 7.874673290993087,
+      "support_field_equal": {
+        "schema_version": true,
+        "station_order": true,
+        "scores": true,
+        "object_heatmaps": true,
+        "heatmap_fields": true,
+        "object_points": true,
+        "yaws_rad": true,
+        "evaluated_station_indices": true,
+        "positive_stations": true,
+        "supports": true
+      },
+      "plan_field_equal": {
+        "anchors": false,
+        "object_diagnostics": false,
+        "baseline": false,
+        "anchor_count": true,
+        "photo_count": true,
+        "covered_object_ids": true,
+        "optimality": true
+      },
+      "cost": [
+        4,
+        10
+      ],
+      "audit": "passed"
+    },
+    "baseline-3": {
+      "label": "baseline-3",
+      "python": "/home/hri/miniconda3/envs/test/bin/python",
+      "wall_s": 35.170923523954116,
+      "generation_s": 25.85389563301578,
+      "selection_s": 7.9418640460353345,
+      "support_field_equal": {
+        "schema_version": true,
+        "station_order": true,
+        "scores": true,
+        "object_heatmaps": true,
+        "heatmap_fields": true,
+        "object_points": true,
+        "yaws_rad": true,
+        "evaluated_station_indices": true,
+        "positive_stations": true,
+        "supports": true
+      },
+      "plan_field_equal": {
+        "anchors": true,
+        "object_diagnostics": true,
+        "baseline": true,
+        "anchor_count": true,
+        "photo_count": true,
+        "covered_object_ids": true,
+        "optimality": true
+      },
+      "cost": [
+        4,
+        10
+      ],
+      "audit": "passed"
+    },
+    "final-3": {
+      "label": "final-3",
+      "python": "/home/hri/miniconda3/envs/test/bin/python",
+      "wall_s": 23.363401622977108,
+      "generation_s": 14.199102589045651,
+      "selection_s": 7.919566330965608,
+      "support_field_equal": {
+        "schema_version": true,
+        "station_order": true,
+        "scores": true,
+        "object_heatmaps": true,
+        "heatmap_fields": true,
+        "object_points": true,
+        "yaws_rad": true,
+        "evaluated_station_indices": true,
+        "positive_stations": true,
+        "supports": true
+      },
+      "plan_field_equal": {
+        "anchors": false,
+        "object_diagnostics": false,
+        "baseline": false,
+        "anchor_count": true,
+        "photo_count": true,
+        "covered_object_ids": true,
+        "optimality": true
+      },
+      "cost": [
+        4,
+        10
+      ],
+      "audit": "passed"
+    },
+    "stage2": {
+      "label": "stage2",
+      "python": "/home/hri/miniconda3/envs/test/bin/python",
+      "wall_s": 28.573405585018918,
+      "generation_s": 19.491357999038883,
+      "selection_s": 7.852356979972683,
+      "support_field_equal": {
+        "schema_version": true,
+        "station_order": true,
+        "scores": true,
+        "object_heatmaps": true,
+        "heatmap_fields": true,
+        "object_points": true,
+        "yaws_rad": true,
+        "evaluated_station_indices": true,
+        "positive_stations": true,
+        "supports": true
+      },
+      "plan_field_equal": {
+        "anchors": true,
+        "object_diagnostics": true,
+        "baseline": true,
+        "anchor_count": true,
+        "photo_count": true,
+        "covered_object_ids": true,
+        "optimality": true
+      },
+      "cost": [
+        4,
+        10
+      ],
+      "audit": "passed"
+    },
+    "stage3": {
+      "label": "stage3",
+      "python": "/home/hri/miniconda3/envs/test/bin/python",
+      "wall_s": 27.433555803028867,
+      "generation_s": 18.28759468800854,
+      "selection_s": 7.9108389359898865,
+      "support_field_equal": {
+        "schema_version": true,
+        "station_order": true,
+        "scores": true,
+        "object_heatmaps": true,
+        "heatmap_fields": true,
+        "object_points": true,
+        "yaws_rad": true,
+        "evaluated_station_indices": true,
+        "positive_stations": true,
+        "supports": true
+      },
+      "plan_field_equal": {
+        "anchors": false,
+        "object_diagnostics": false,
+        "baseline": false,
+        "anchor_count": true,
+        "photo_count": true,
+        "covered_object_ids": true,
+        "optimality": true
+      },
+      "cost": [
+        4,
+        10
+      ],
+      "audit": "passed"
+    },
+    "native-final": {
+      "label": "native-final",
+      "python": "/home/hri/miniconda3/envs/test/bin/python",
+      "wall_s": 25.065671591903083,
+      "generation_s": 15.498818821972236,
+      "selection_s": 7.94289735192433,
+      "support_field_equal": {
+        "schema_version": true,
+        "station_order": true,
+        "scores": false,
+        "object_heatmaps": false,
+        "heatmap_fields": true,
+        "object_points": true,
+        "yaws_rad": true,
+        "evaluated_station_indices": true,
+        "positive_stations": true,
+        "supports": true
+      },
+      "plan_field_equal": {
+        "anchors": false,
+        "object_diagnostics": false,
+        "baseline": false,
+        "anchor_count": true,
+        "photo_count": true,
+        "covered_object_ids": true,
+        "optimality": true
+      },
+      "cost": [
+        4,
+        10
+      ],
+      "audit": "passed"
+    }
+  },
+  "medians": {
+    "baseline": {
+      "wall_s": 35.3734335990157,
+      "generation_s": 26.019523467984982,
+      "selection_s": 7.949610976036638
+    },
+    "final": {
+      "wall_s": 23.16326968197245,
+      "generation_s": 14.029617719003,
+      "selection_s": 7.885012259008363
+    }
+  },
+  "wall_reduction_percent": 34.51789287818248,
+  "wall_speedup": 1.5271347303159966,
+  "geometry_differences": {
+    "counts": {
+      "projected_pixels": 82,
+      "visible_pixels": 69,
+      "in_frame_fraction": 26,
+      "quality": 23
+    },
+    "max_abs_differences": {
+      "projected_pixels": 5.820766091346741e-11,
+      "visible_pixels": 1.1641532182693481e-10,
+      "in_frame_fraction": 3.3306690738754696e-16,
+      "quality": 3.3306690738754696e-16
+    },
+    "examples": {
+      "projected_pixels": [
+        "anchors/*/observations/*/object_metrics/o12/projected_pixels",
+        80585.23423339124,
+        80585.23423339122
+      ],
+      "visible_pixels": [
+        "anchors/*/observations/*/object_metrics/o12/visible_pixels",
+        80585.23423339124,
+        80585.23423339122
+      ],
+      "in_frame_fraction": [
+        "anchors/*/observations/*/object_metrics/o13/in_frame_fraction",
+        0.8874142495654559,
+        0.8874142495654556
+      ],
+      "quality": [
+        "anchors/*/observations/*/object_metrics/o13/quality",
+        0.8874142495654559,
+        0.8874142495654556
+      ]
+    }
+  },
+  "native_score_differences": {
+    "score_difference_count": 3,
+    "max_abs_score_difference": 6.082595809264735e-05,
+    "differences": [
+      {
+        "station": "5895",
+        "yaw": "10",
+        "object": "o20",
+        "reference": 0.5726599652587581,
+        "open3d": 0.5726619128598486,
+        "abs_error": 1.9476010905128405e-06
+      },
+      {
+        "station": "7565",
+        "yaw": "10",
+        "object": "o20",
+        "reference": 0.5229310421666916,
+        "open3d": 0.5229918681247843,
+        "abs_error": 6.082595809264735e-05
+      },
+      {
+        "station": "8196",
+        "yaw": "4",
+        "object": "o7",
+        "reference": 0.5223752065345624,
+        "open3d": 0.5224248241655419,
+        "abs_error": 4.961763097954819e-05
+      }
+    ]
+  },
+  "random_metrics": {
+    "numpy": {
+      "backend": "numpy",
+      "pairs": 3360,
+      "significant_difference_counts": {},
+      "max_abs_float_differences": {
+        "visible_pixels": 2.3283064365386963e-10,
+        "projected_pixels": 2.9802322387695312e-08,
+        "in_frame_fraction": 5.551115123125783e-16,
+        "quality": 5.551115123125783e-16
+      },
+      "examples": {}
+    },
+    "open3d": {
+      "backend": "open3d",
+      "pairs": 3360,
+      "significant_difference_counts": {},
+      "max_abs_float_differences": {
+        "visible_pixels": 2.3283064365386963e-10,
+        "projected_pixels": 2.9802322387695312e-08,
+        "in_frame_fraction": 5.551115123125783e-16,
+        "quality": 5.551115123125783e-16
+      },
+      "examples": {}
+    }
+  },
+  "python_tests": 100,
+  "node_suites": 2
+}

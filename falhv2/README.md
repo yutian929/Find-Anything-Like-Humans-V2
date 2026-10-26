@@ -11,6 +11,21 @@ python -B falhv2/main.py
 
 统一入口一次完成安全区域提取、观察候选计算、基线与两阶段优化、复核重选和导出。默认生成 `outputs/safe_regions.json`、`safe_regions.svg`、`anchor_plan.json`、`anchor_plan.html`、`anchor_plan.svg`、`anchor_plan.supports.json`，无需先运行其他模块。地图编辑器和真机相机标定仍是独立的输入准备工具。
 
+2026-10-26 起，观测计算使用 NumPy 批量矩阵乘法、列式数组与批量统计，以及 Shapely/GEOS 双精度凸包和裁剪。安装依赖仍在同一个环境中执行：
+
+```bash
+conda activate test
+python -m pip install -r falhv2/requirements.txt
+```
+
+依赖统一在 `requirements.txt` 中维护，包含 Open3D。默认射线后端仍为 NumPy Float64；Open3D 为显式实验选项，最终原密度及高密度复核始终使用 NumPy Float64：
+
+```bash
+python -B falhv2/main.py --ray-backend open3d --output falhv2/outputs/open3d/anchor_plan.json
+```
+
+Open3D 使用 Float32；当前地图有少量候选评分差异，且包含启动成本的实测未优于 NumPy，因此不自动切换后端。`configuration.candidate_ray_backend` 和 `verification_ray_backend` 记录实际实现。分阶段过程、精度边界、批次/线程与混合求交实验见[现成库优化记录](../docs/falhv2/library_acceleration_20261026.md)。
+
 研究定义与算法依据见[锚点选择研究记录（含旧版路径约束方案）](../docs/falhv2/path_constrained_anchor_selection_v0_20261013.md)；实施进度和验收要求见[研究路线与交接](../docs/falhv2/research_roadmap_and_handoff.md)。
 
 观察模型与旧加权贪心规则见[锚点选择改进说明](../docs/falhv2/anchor_selection_refine.md)：安装位姿约束观察区域、连续权重和逐物体热力图。当前选点采用下述两阶段整数优化。[旧版锚点选取图解](../docs/falhv2/anchor_selection_explained_20261019.md)保留了改进前的七张示意图和运行案例。
@@ -34,6 +49,8 @@ python -B falhv2/main.py
 默认地图验收：旧方案 **5 站14张**，新方案 **4 站10张**；最终 28/28 目标在原模型与 96×96 复核下均合格覆盖。原候选池两级资源下界分别为 4 和 10，gap 均为 0。首次最优解出现一个遮挡采样边界问题，经过一次自动重选修复，成本不变。实现依据见[两阶段选点计划](../docs/falhv2/lexicographic_anchor_selection_plan_20261024.md)，过程、时间和边界见[验收报告](../docs/falhv2/lexicographic_anchor_selection_validation_20261024.md)。
 
 2026-10-25 加速验收：完整命令三次运行中位数由 **74.55 s 降为 35.54 s（约 2.10 倍）**，候选计算由 57.06 s 降为 26.18 s。完整 supports、得分、热图和最佳候选诊断保持一致；最终仍为 4 站10张，28/28 通过高密度复核。具体同成本站位可能变化，见[加速实现与对照报告](../docs/falhv2/observation_acceleration_validation_20261025.md)。
+
+2026-10-26 现成库优化验收：三轮交替完整运行的中位数 **35.37 s → 23.16 s（减少 34.5%）**，候选生成 **26.02 s → 14.03 s**。完整 supports、评分和热图一致；几何面积存在双精度末位差异，最终站位/朝向不变，仍为 4 站10张、28/28 高密度复核通过。Open3D 实验版完整运行 25.07 s，存在 3 条候选评分差异，默认继续使用 NumPy，见[优化过程与验收记录](../docs/falhv2/library_acceleration_20261026.md)。
 
 ## 环境与运行约定
 

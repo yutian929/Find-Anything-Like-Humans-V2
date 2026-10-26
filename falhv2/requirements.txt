@@ -1,0 +1,6 @@
+# Tested together in conda environment "test" (Python 3.10).
+numpy==1.26.4
+scipy==1.15.3
+opencv-python==4.10.0.84
+shapely==2.1.2
+open3d==0.19.0

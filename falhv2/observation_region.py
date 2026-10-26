@@ -49,11 +49,11 @@ def radial_envelope(camera, center, corners, origins, rotation):
     fallback = fallback / np.maximum(norm[:, None], 1e-12)
     fallback[norm < 1e-12] = [1, 0]
     bearing[zero, :2] = fallback
-    slope = np.einsum('bi,bij->bj', bearing, rotation)
+    slope = np.matmul(bearing[:, None, :], rotation)[:, 0, :]
     relative = np.broadcast_to(corners[None, :, :], (len(origins), len(corners), 3)).copy()
     relative[:, :, :2] -= center[:2]
     relative[:, :, 2] -= origins[:, None, 2]
-    intercept = np.einsum('bki,bij->bkj', relative, rotation)
+    intercept = np.matmul(relative, rotation)
     height = center[2]-origins[:, 2]
     near = np.sqrt(np.maximum(0, camera.min_distance**2-height**2))
     far = np.sqrt(np.maximum(0, camera.max_distance**2-height**2))

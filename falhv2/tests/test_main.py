@@ -14,6 +14,9 @@ sys.path.insert(0, str(ROOT))
 import main as pipeline
 import config as settings
 import regions_extractor
+import anchor_candidates
+from observation_model import BoxObserver
+from test_observation_model import box, camera_config
 from test_anchor_common import config
 
 
@@ -77,6 +80,22 @@ class MainTests(unittest.TestCase):
                     self.assertTrue(output.with_suffix('.safe_regions.json').is_file())
                     self.assertTrue(output.with_suffix('.safe_regions.svg').is_file())
                     self.assertFalse(output.with_suffix('.supports.json').exists())
+
+    def test_native_candidate_option_keeps_float64_final_verifier(self):
+        scene = {'grid': {'rows': ['....']*4, 'origin': [0, 0], 'resolution': 1},
+                 'objects': [box('target', [2.5, 1.5, .5], [3.5, 2.5, 1.5])]}
+        robot = {'robot': {'footprint_width_m': .2, 'footprint_length_m': .2, 'safety_margin_m': 0}}
+        # Exercise dispatch without requiring the optional package in this test.
+        def candidates(*args, **kwargs):
+            self.assertEqual(kwargs.pop('ray_backend'), 'open3d')
+            return anchor_candidates.generate_candidates(*args, **kwargs)
+        with patch.object(pipeline, 'generate_candidates', side_effect=candidates), \
+                patch.object(pipeline, 'BoxObserver', wraps=BoxObserver) as verifier:
+            result, *_ = pipeline.plan(scene, robot, camera_config(), ray_backend='open3d')
+        self.assertEqual(verifier.call_args.kwargs['ray_backend'], 'numpy')
+        self.assertEqual(result['configuration']['candidate_ray_backend'], 'open3d')
+        self.assertEqual(result['configuration']['verification_ray_backend'], 'numpy')
+        self.assertEqual(result['optimization']['geometry_verification'], 'passed')
 
 
 if __name__ == '__main__':
