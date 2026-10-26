@@ -66,7 +66,8 @@ class ConfigTests(unittest.TestCase):
             with self.subTest(key=key), patch.dict(settings.OBSERVATION_DEFAULTS, {key: value}):
                 with self.assertRaises(ValueError):
                     ObservationSettings.from_config(camera_config())
-        for key, value in [('AUDIT_SAMPLE_GRID', 129), ('MAX_AUDIT_RETRIES', -1), ('MAX_AUDIT_RETRIES', True)]:
+        for key, value in [('AUDIT_SAMPLE_GRID', 129), ('MAX_AUDIT_RETRIES', -1), ('MAX_AUDIT_RETRIES', True),
+                           ('SAME_COST_REPAIR_TIME_LIMIT_S', -1), ('SAME_COST_REPAIR_TIME_LIMIT_S', float('nan'))]:
             with self.subTest(key=key), patch.object(settings, key, value):
                 with self.assertRaises(ValueError):
                     verification.audit_parameters()
@@ -86,7 +87,8 @@ class ConfigTests(unittest.TestCase):
                     self.assertEqual(result['configuration']['yaw_step_deg'], step)
                     self.assertEqual(result['statistics']['yaw_count'], 360//step)
                     self.assertEqual(result['configuration']['selection_time_limit_s'], budget)
-                    self.assertEqual(result['configuration']['audit'], dict(sample_grid=64, max_retries=0))
+                    self.assertEqual(result['configuration']['audit'], dict(sample_grid=64, max_retries=0,
+                        same_cost_time_limit_s=settings.SAME_COST_REPAIR_TIME_LIMIT_S))
 
     def prepare(self, root):
         data = root/'data'

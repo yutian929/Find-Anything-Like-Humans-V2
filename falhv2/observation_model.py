@@ -8,6 +8,7 @@ from __future__ import annotations
 
 from dataclasses import asdict, dataclass, field
 from itertools import product
+from functools import lru_cache
 import math
 from typing import Sequence
 
@@ -166,13 +167,19 @@ def ray_box_entry(origins, directions, lower, upper):
     entry zero; callers conservatively reject cameras inside solid geometry.
     """
     origins, directions = np.asarray(origins), np.asarray(directions)
-    parallel = np.abs(directions) < 1e-12
-    denominator = np.where(parallel, 1.0, directions)
-    a = (np.asarray(lower)-origins)/denominator
-    b = (np.asarray(upper)-origins)/denominator
-    near = np.where(parallel, -np.inf, np.minimum(a, b)).max(axis=-1)
-    far = np.where(parallel, np.inf, np.maximum(a, b)).min(axis=-1)
-    outside = np.any(parallel & ((origins < lower) | (origins > upper)), axis=-1)
+    lower, upper = np.asarray(lower), np.asarray(upper)
+    # Work one axis at a time. This preserves the slab arithmetic and comparison
+    # tolerances while avoiding several (..., rays, 3) temporaries and reductions.
+    near, far, outside = -np.inf, np.inf, False
+    for axis in range(3):
+        origin, direction = origins[..., axis], directions[..., axis]
+        lo, hi = lower[..., axis], upper[..., axis]
+        parallel = np.abs(direction) < 1e-12
+        denominator = np.where(parallel, 1.0, direction)
+        a, b = (lo-origin)/denominator, (hi-origin)/denominator
+        near = np.maximum(near, np.where(parallel, -np.inf, np.minimum(a, b)))
+        far = np.minimum(far, np.where(parallel, np.inf, np.maximum(a, b)))
+        outside = outside | (parallel & ((origin < lo) | (origin > hi)))
     entry = np.maximum(near, 0.0)
     return np.where(~outside & (far >= entry), entry, np.inf)
 
@@ -194,6 +201,8 @@ def projection_areas(points, width, height):
                        for a, b in zip(poly[1:-1], poly[2:])))/2
 
     full = area(polygon)
+    if all(0 <= x <= width and 0 <= y <= height for x, y in polygon):
+        return full, full
     for axis, bound, sign in ((0, 0, 1), (0, width, -1), (1, 0, 1), (1, height, -1)):
         if not polygon:
             break
@@ -212,6 +221,17 @@ def projection_areas(points, width, height):
     return full, min(full, area(polygon))
 
 
+@lru_cache(maxsize=16)
+def _sampling_grid(size):
+    """Immutable normalized pixel offsets, shared by coarse and refined batches."""
+    grid = (np.arange(size)+.5)/size
+    gx, gy = np.meshgrid(grid, grid)
+    gx, gy = gx.ravel(), gy.ravel()
+    gx.setflags(write=False)
+    gy.setflags(write=False)
+    return gx, gy
+
+
 class BoxObserver:
     def __init__(self, camera, objects, settings=None):
         self.camera = camera
@@ -223,6 +243,7 @@ class BoxObserver:
         self.upper = np.array([o['aabb']['max'] for o in self.objects], dtype=float).reshape(-1, 3)
         self.ids = [o['id'] for o in self.objects]
         self.corners = np.array(list(product((0, 1), repeat=3)), dtype=float)
+        self.box_corners = self.lower[:, None, :] + self.corners * (self.upper-self.lower)[:, None, :]
 
     def poses(self, positions, yaws):
         return camera_poses(self.camera, positions, yaws)
@@ -231,41 +252,59 @@ class BoxObserver:
         origins, rotation = self.poses(positions, yaws)
         low, high = self.lower[target_index], self.upper[target_index]
         return radial_envelope(self.camera, (low+high)/2,
-                               low+self.corners*(high-low), origins, rotation)
+                               self.box_corners[target_index], origins, rotation)
 
-    def evaluate(self, target_index, positions, yaws):
-        """Return one metric record per pose, refining near qualification thresholds."""
+    def evaluate(self, target_index, positions, yaws, *, candidate_only=False):
+        """Evaluate observations with the original sampling and refinement rules.
+
+        Candidate-only calls may omit occlusion for geometrically impossible
+        observations. Their unsampled metrics are None, never fabricated zeros.
+        Callers must recompute these rows before using them as diagnostics.
+        Final-action verification uses the default, complete evaluation.
+        """
         origins, rotation = self.poses(positions, yaws)
         low, high = self.lower[target_index], self.upper[target_index]
         envelopes = radial_envelope(self.camera, (low+high)/2,
-                                    low+self.corners*(high-low), origins, rotation)
+                                    self.box_corners[target_index], origins, rotation)
         records = []
-        # Bound temporary arrays even for fine user-specified sampling.
         for start in range(0, len(origins), 32):
             o, r = origins[start:start+32], rotation[start:start+32]
             envelope = tuple(values[start:start+32] for values in envelopes)
-            batch = self._evaluate(target_index, o, r, self.settings.sample_grid, envelope)
+            geometry = self._prepare_geometry(target_index, o, r, envelope)
+            batch = geometry['records']
+            active = geometry['active']
+            if candidate_only:
+                retained = []
+                for i in active:
+                    row = batch[i]
+                    reason = ('in_frame_fraction' if row['in_frame_fraction']+1e-9 < self.settings.min_in_frame_fraction
+                              else 'visible_pixels' if geometry['areas'][i, 1]+1e-9 < self.settings.min_visible_pixels
+                              else None)
+                    if reason is None:
+                        retained.append(i)
+                    else:
+                        row.update(reason=reason, visible_fraction=None, visible_pixels=None,
+                                   quality=None, observation_score=None, occluder_ids=None)
+                active = np.asarray(retained, dtype=int)
+            self._sample_occlusion(target_index, geometry, active, self.settings.sample_grid)
             if self.settings.refinement_grid > self.settings.sample_grid:
-                selected = [i for i, row in enumerate(batch) if row['projectable'] and (
-                    abs(row['in_frame_fraction']-self.settings.min_in_frame_fraction) <= .08 or
-                    abs(row['observation_score']-self.settings.min_observation_score) <= .08 or
-                    abs(row['visible_pixels']-self.settings.min_visible_pixels) <= .2*self.settings.min_visible_pixels)]
+                selected = [i for i in active if (
+                    abs(batch[i]['in_frame_fraction']-self.settings.min_in_frame_fraction) <= .08 or
+                    abs(batch[i]['observation_score']-self.settings.min_observation_score) <= .08 or
+                    abs(batch[i]['visible_pixels']-self.settings.min_visible_pixels) <= .2*self.settings.min_visible_pixels)]
                 if selected:
-                    refined = self._evaluate(target_index, o[selected], r[selected], self.settings.refinement_grid,
-                                             tuple(values[selected] for values in envelope))
-                    for i, row in zip(selected, refined):
-                        batch[i] = row
+                    self._sample_occlusion(target_index, geometry, np.asarray(selected), self.settings.refinement_grid)
             records.extend(batch)
         return records
 
-    def _evaluate(self, target_index, origins, rotation, grid_size, envelope=None):
+    def _prepare_geometry(self, target_index, origins, rotation, envelope):
+        """Compute projection, framing and blocker bounds once per target/pose."""
         cam, settings = self.camera, self.settings
         low, high = self.lower[target_index], self.upper[target_index]
-        corners = low + self.corners*(high-low)
+        corners = self.box_corners[target_index]
         optical = np.einsum('bki,bij->bkj', corners[None, :, :]-origins[:, None, :], rotation)
         distance = np.linalg.norm((low+high)/2-origins, axis=1)
-        radius, near, far, region_ok = (radial_envelope(cam, (low+high)/2, corners, origins, rotation)
-                                      if envelope is None else envelope)
+        radius, near, far, region_ok = envelope
         camera_inside = np.zeros(len(origins), dtype=bool)
         for lo, hi in zip(self.lower, self.upper):
             camera_inside |= np.all((origins >= lo) & (origins <= hi), axis=1)
@@ -278,25 +317,50 @@ class BoxObserver:
                         radial_near_m=float(near[i]) if region_ok[i] else None,
                         radial_far_m=float(far[i]) if region_ok[i] else None,
                         center_distance_m=float(d), occluder_ids=[],
-                        sample_grid=grid_size, reason=('camera_inside_geometry' if inside else
+                        sample_grid=settings.sample_grid, reason=('camera_inside_geometry' if inside else
                         'behind_or_crossing_camera_plane' if not ahead else 'distance' if not valid else 'out_of_frame'))
                    for i, (d, inside, ahead, valid) in enumerate(zip(distance, camera_inside, front, range_ok))]
         active = np.flatnonzero(front & range_ok & ~camera_inside & region_ok)
+        bounds = np.zeros((len(origins), 4))
+        areas = np.zeros((len(origins), 2))
+        if len(active):
+            xyz = optical[active]
+            u = cam.fx*xyz[:, :, 0]/xyz[:, :, 2]+cam.cx
+            v = cam.fy*xyz[:, :, 1]/xyz[:, :, 2]+cam.cy
+            projected_bounds = np.column_stack((u.min(axis=1), v.min(axis=1), u.max(axis=1), v.max(axis=1)))
+            overlaps = ((projected_bounds[:, 2] > 0) & (projected_bounds[:, 0] < cam.width)
+                        & (projected_bounds[:, 3] > 0) & (projected_bounds[:, 1] < cam.height))
+            polygons = np.stack((u, v), axis=-1)[overlaps]
+            active = active[overlaps]
+            bounds[active] = projected_bounds[overlaps]
+            weights = radial_weight(radius[active], near[active], far[active],
+                                    settings.radial_inner_weight, settings.radial_outer_weight)
+            for i, polygon, weight in zip(active, polygons, weights):
+                projected_area, framed_area = projection_areas(polygon, cam.width, cam.height)
+                areas[i] = projected_area, framed_area
+                records[i].update(projectable=True,
+                    in_frame_fraction=framed_area/projected_area if projected_area else 0.0,
+                    projected_pixels=projected_area, distance_weight=float(weight),
+                    projection_bounds=bounds[i].tolist())
+        # Shared by every blocker and by coarse/refined occlusion sampling.
+        segment_min = np.minimum(origins, low)
+        segment_max = np.maximum(origins, high)
+        relevant = np.all((self.upper[:, None, :] >= segment_min)
+                          & (self.lower[:, None, :] <= segment_max), axis=2)
+        return dict(origins=origins, rotation=rotation, records=records, active=active,
+                    bounds=bounds, areas=areas, relevant=relevant)
+
+    def _sample_occlusion(self, target_index, geometry, active, grid_size):
+        """Update only sampling-dependent metrics, reusing unchanged geometry."""
         if not len(active):
-            return records
-        xyz = optical[active]
-        u = cam.fx*xyz[:, :, 0]/xyz[:, :, 2]+cam.cx
-        v = cam.fy*xyz[:, :, 1]/xyz[:, :, 2]+cam.cy
-        bounds = np.column_stack((u.min(axis=1), v.min(axis=1), u.max(axis=1), v.max(axis=1)))
-        overlaps = (bounds[:, 2] > 0) & (bounds[:, 0] < cam.width) & (bounds[:, 3] > 0) & (bounds[:, 1] < cam.height)
-        polygons = np.stack((u, v), axis=-1)[overlaps]
-        active, bounds = active[overlaps], bounds[overlaps]
-        if not len(active):
-            return records
-        grid = (np.arange(grid_size)+.5)/grid_size
-        gx, gy = np.meshgrid(grid, grid)
-        uu = bounds[:, :1] + (bounds[:, 2:3]-bounds[:, :1])*gx.ravel()
-        vv = bounds[:, 1:2] + (bounds[:, 3:4]-bounds[:, 1:2])*gy.ravel()
+            return
+        cam, settings = self.camera, self.settings
+        low, high = self.lower[target_index], self.upper[target_index]
+        origins, rotation = geometry['origins'], geometry['rotation']
+        bounds = geometry['bounds'][active]
+        gx, gy = _sampling_grid(grid_size)
+        uu = bounds[:, :1] + (bounds[:, 2:3]-bounds[:, :1])*gx
+        vv = bounds[:, 1:2] + (bounds[:, 3:4]-bounds[:, 1:2])*gy
         rays = np.stack(((uu-cam.cx)/cam.fx, (vv-cam.cy)/cam.fy, np.ones_like(uu)), axis=-1)
         rays = np.einsum('bsi,bji->bsj', rays, rotation[active])
         rays /= np.linalg.norm(rays, axis=-1, keepdims=True)
@@ -309,11 +373,7 @@ class BoxObserver:
         for other, (lo, hi) in enumerate(zip(self.lower, self.upper)):
             if other == target_index:
                 continue
-            # Every camera-to-target segment lies inside this world-space box.
-            # Reject unrelated blockers before doing per-ray slab intersections.
-            segment_min = np.minimum(origins[active], low)
-            segment_max = np.maximum(origins[active], high)
-            relevant = np.flatnonzero(np.all((hi >= segment_min) & (lo <= segment_max), axis=1))
+            relevant = np.flatnonzero(geometry['relevant'][other, active])
             if not len(relevant):
                 continue
             entry = ray_box_entry(start[relevant], rays[relevant], lo, hi)
@@ -324,23 +384,16 @@ class BoxObserver:
         for row, original in enumerate(active):
             framed = int(in_frame[row].sum())
             exposed = int(visible[row].sum())
-            # With all corners in front, the solid box silhouette is their
-            # convex hull. Clip it geometrically: sampled framing oscillates at
-            # the 80% gate and can falsely certify a cropped final observation.
-            projected_area, framed_area = projection_areas(polygons[row], cam.width, cam.height)
-            framing = framed_area/projected_area if projected_area else 0.0
+            record = geometry['records'][original]
+            framing = record['in_frame_fraction']
             visibility = exposed/framed if framed else 0.0
-            pixels = framed_area*visibility
-            weight = float(radial_weight(radius[original], near[original], far[original],
-                                        settings.radial_inner_weight, settings.radial_outer_weight))
-            score = weight*visibility
+            pixels = geometry['areas'][original, 1]*visibility
+            score = record['distance_weight']*visibility
             reason = ('in_frame_fraction' if framing+1e-9 < settings.min_in_frame_fraction else
                       'visible_pixels' if pixels+1e-9 < settings.min_visible_pixels else
                       'observation_score' if score+1e-9 < settings.min_observation_score else 'qualified')
-            records[original].update(qualified=reason == 'qualified', projectable=True,
-                in_frame_fraction=framing, visible_fraction=visibility, visible_pixels=pixels,
-                projected_pixels=projected_area, quality=framing*visibility,
-                observation_score=score, distance_weight=weight,
+            record.update(qualified=reason == 'qualified', visible_fraction=visibility,
+                visible_pixels=pixels, quality=framing*visibility, observation_score=score,
+                sample_grid=grid_size,
                 occluder_ids=[self.ids[i] for i in sorted(set(blocker[row][blocker[row] >= 0].tolist()))],
-                projection_bounds=bounds[row].tolist(), reason=reason)
-        return records
+                reason=reason)

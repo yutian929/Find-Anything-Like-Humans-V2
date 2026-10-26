@@ -37,6 +37,7 @@ YAW_STEP_DEG = 30.0                # 每站方向间隔，(0,360] 度
 SELECTION_TIME_LIMIT_S = None      # 全部 MILP 调用共享的秒数预算；None 表示不限时
 AUDIT_SAMPLE_GRID = 96            # 最终复核边长，整数 [4,128]；实际不低于 refinement_grid
 MAX_AUDIT_RETRIES = 3             # 高密度复核失败后的重选次数；0 表示直接尝试基线兜底
+SAME_COST_REPAIR_TIME_LIMIT_S = 2.0 # 已有最优性证明时，先限时寻找同成本修复；0 关闭
 
 
 def read_input(path: Path) -> dict:

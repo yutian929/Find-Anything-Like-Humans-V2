@@ -27,13 +27,17 @@ python -B falhv2/main.py
 
 默认配置下，完整 AABB 的最终照片额外用至少 96×96 遮挡采样检查全部目标。若出现覆盖缺口，仅在求解副本中删除复核否定的关系，最多重选三次；完整候选与热图不改写。重选失败或预算不足时，退回通过高密度复核的基线；基线也未通过则明确报告复核失败。修正解只有达到原来已证明的成本才继承原候选池最优性。`optimization.high_density_verification` 单独记录初次、最终、重选及基线复核；每张照片的 `high_density_object_metrics` 与原采样 `object_metrics` 分开保存。`complete` 和最优性标签针对原观察矩阵，是否通过高密度检查必须另看上述字段，页面同时显示。
 
+2026-10-25 起，若初始两阶段已证明最优，删边后的重选先在原最优站数和照片数下做限时可行性搜索。找到方案并通过复核即可继承原候选池证明；搜索本身不产生新的最优性证明。搜索失败则恢复完整两阶段优化，预算耗尽则回退已复核基线。每次尝试默认最多 2 秒，并计入全局 MILP 预算；设置 `SAME_COST_REPAIR_TIME_LIMIT_S = 0` 可关闭。`high_density_verification.same_cost_searches` 保存尝试状态及耗时；成功修复对应的 `repairs[].optimization.fixed_cost_feasibility` 保存可行性结果。同成本解的具体站位和朝向可能与旧版不同。
+
 主结果为 schema 5；候选 `.supports.json` 的结构保持 schema 4。新结果包含独立的 `baseline`、`optimization`、`objective_order` 等字段。页面支持新方案/旧基线切换：新方案保留静态热力图，只有基线提供贪心轮次回放。
 
 默认地图验收：旧方案 **5 站14张**，新方案 **4 站10张**；最终 28/28 目标在原模型与 96×96 复核下均合格覆盖。原候选池两级资源下界分别为 4 和 10，gap 均为 0。首次最优解出现一个遮挡采样边界问题，经过一次自动重选修复，成本不变。实现依据见[两阶段选点计划](../docs/falhv2/lexicographic_anchor_selection_plan_20261024.md)，过程、时间和边界见[验收报告](../docs/falhv2/lexicographic_anchor_selection_validation_20261024.md)。
 
+2026-10-25 加速验收：完整命令三次运行中位数由 **74.55 s 降为 35.54 s（约 2.10 倍）**，候选计算由 57.06 s 降为 26.18 s。完整 supports、得分、热图和最佳候选诊断保持一致；最终仍为 4 站10张，28/28 通过高密度复核。具体同成本站位可能变化，见[加速实现与对照报告](../docs/falhv2/observation_acceleration_validation_20261025.md)。
+
 ## 环境与运行约定
 
-实验调参入口为 [`config.py`](config.py)，本轮新增参数保持此前默认数值：
+实验调参入口为 [`config.py`](config.py)，观察门槛与采样默认值保持不变：
 
 | 配置项 | 默认值 | 用途 |
 |---|---|---|
@@ -46,6 +50,7 @@ python -B falhv2/main.py
 | `SELECTION_TIME_LIMIT_S` | `None` | 全部 MILP 调用共享预算，秒；`None` 不限时 |
 | `AUDIT_SAMPLE_GRID` | 96 | 最终复核网格边长；实际不低于临界采样边长 |
 | `MAX_AUDIT_RETRIES` | 3 | 复核缺口重选次数；0 时直接尝试基线兜底 |
+| `SAME_COST_REPAIR_TIME_LIMIT_S` | 2.0 | 每次同成本修复的 MILP 秒数上限，受全局剩余预算约束；0 关闭 |
 
 `OBSERVATION_DEFAULTS` 是字典，修改其中的数值即可。相机 JSON 的 `observation_quality` 若显式定义同名字段，则覆盖该字典；目前默认相机 JSON 只定义距离范围，所以上表观察参数均由 `config.py` 生效。CLI 的 `--yaw-step-deg` 和 `--selection-time-limit-s` 覆盖规划默认值。Python `plan()` 未传入或传入 `None` 时采用对应配置值。
 
@@ -304,6 +309,8 @@ python -B falhv2/main.py \
 | `refinement_grid` | 36 | 接近门槛时每轴加密采样数，不低于初始值 |
 
 入镜比例或最终得分距离门槛不超过 0.08、或像素面积距离门槛不超过门槛的 20% 时重新加密遮挡采样。入镜比例用投影凸包裁切计算，不依赖采样点计数；可见面积为裁切后的投影面积 × 采样未遮挡比例。分批处理并粗筛遮挡体；很细的遮挡物仍可能漏采，没有解析遮挡误差保证。相机位于任一实心 Box 内、或目标跨越相机平面时保守拒绝。
+
+观察计算复用粗细采样之间的投影、裁切面积、距离权重和遮挡体范围；采样网格与盒角点缓存，权重批量计算，射线求交按轴处理以减少临时数组。候选阶段先检查入镜比例和可见面积上界，确定不合格的观察跳过遮挡计算；这些内部记录的未计算指标为 `None`，不会作为真实分数导出。若物体没有合格观察，补算被跳过的观察以恢复原来的最佳失败诊断及平票顺序。最终照片仍完整计算全部物体指标。`statistics.occlusion_skipped_pose_pairs` 和 `diagnostic_recomputed_pose_pairs` 分别记录跳过和补算数量。完整候选池、合格分数、热图和原采样/加密规则保持不变。
 
 旧字段 `min_visible_fraction` 已移除；配置仍含此字段时会提示删除，以避免旧 60% 门槛与新规则同时生效。默认相机 JSON 没有该旧字段，无需修改。
 

@@ -2,6 +2,7 @@
 from copy import deepcopy
 from dataclasses import replace
 import logging
+import math
 from time import perf_counter
 
 import numpy as np
@@ -9,12 +10,12 @@ import numpy as np
 try:
     from . import config as settings
     from .observation_model import BoxObserver
-    from .anchor_optimizer import optimize
+    from .anchor_optimizer import optimize, find_cover_at_cost
     from .anchor_selector import assemble_anchors
 except ImportError:
     import config as settings
     from observation_model import BoxObserver
-    from anchor_optimizer import optimize
+    from anchor_optimizer import optimize, find_cover_at_cost
     from anchor_selector import assemble_anchors
 
 
@@ -43,11 +44,15 @@ def audit_observations(selected, objects, observer):
 
 def audit_parameters():
     grid, retries = settings.AUDIT_SAMPLE_GRID, settings.MAX_AUDIT_RETRIES
+    same_cost_limit = settings.SAME_COST_REPAIR_TIME_LIMIT_S
     if isinstance(grid, bool) or not isinstance(grid, int) or not 4 <= grid <= 128:
         raise ValueError('AUDIT_SAMPLE_GRID must be an integer in [4, 128]')
     if isinstance(retries, bool) or not isinstance(retries, int) or retries < 0:
         raise ValueError('MAX_AUDIT_RETRIES must be a nonnegative integer')
-    return dict(sample_grid=grid, max_retries=retries)
+    if (isinstance(same_cost_limit, bool) or not isinstance(same_cost_limit, (int, float))
+            or not math.isfinite(same_cost_limit) or same_cost_limit < 0):
+        raise ValueError('SAME_COST_REPAIR_TIME_LIMIT_S must be finite and nonnegative')
+    return dict(sample_grid=grid, max_retries=retries, same_cost_time_limit_s=same_cost_limit)
 
 
 def dense_observer(observer, objects):
@@ -67,7 +72,7 @@ def refine_after_audit(selected, candidates, stations, objects, observer, time_l
     parameters = audit_parameters()
     dense = dense_observer(observer, objects)
     initial = audit_observations(selected, objects, dense)
-    audit = dict(initial=deepcopy(initial), final=initial, repairs=[], parameters=parameters,
+    audit = dict(initial=deepcopy(initial), final=initial, repairs=[], same_cost_searches=[], parameters=parameters,
                  scope='selected_actions_only_not_full_candidate_matrix')
     selected['optimization']['high_density_verification'] = audit
     if initial['status'] == 'passed':
@@ -99,9 +104,23 @@ def refine_after_audit(selected, candidates, stations, objects, observer, time_l
         remaining = None if time_limit_s is None else time_limit_s-elapsed
         if remaining is not None and remaining <= 0:
             break
-        solution = optimize(filtered, targets, baseline_actions, time_limit_s=remaining)
-        elapsed += sum(solution['optimization'][stage].get('elapsed_s', 0)
-                       for stage in ('stage1', 'stage2'))
+        solution = None
+        if original_proven and parameters['same_cost_time_limit_s'] > 0:
+            limit = parameters['same_cost_time_limit_s']
+            search = find_cover_at_cost(filtered, targets, original_cost,
+                                       time_limit_s=min(limit, remaining) if remaining is not None else limit)
+            elapsed += search['elapsed_s']
+            audit['same_cost_searches'].append({k: v for k, v in search.items() if k != 'actions'})
+            if search['actions'] is not None:
+                solution = dict(actions=search['actions'], selected_cost=original_cost,
+                                optimization={'fixed_cost_feasibility': audit['same_cost_searches'][-1]})
+        if solution is None:
+            remaining = None if time_limit_s is None else time_limit_s-elapsed
+            if remaining is not None and remaining <= 0:
+                break
+            solution = optimize(filtered, targets, baseline_actions, time_limit_s=remaining)
+            elapsed += sum(solution['optimization'][stage].get('elapsed_s', 0)
+                           for stage in ('stage1', 'stage2'))
         audit['repairs'].append(dict(selected_cost=solution['selected_cost'],
                                      optimization=solution['optimization']))
         selected['anchors'] = assemble_anchors(solution['actions'], candidates, stations)

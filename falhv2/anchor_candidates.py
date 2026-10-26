@@ -91,6 +91,25 @@ def generate_candidates(
     observer = BoxObserver(camera, objects) if objects and 'aabb' in objects[0] else None
     rejection_counts = Counter()
     diagnostics = {}
+    skipped_occlusion = 0
+    diagnostic_recomputed = 0
+
+    def record_diagnostic(obj, metrics, base, headings, orders):
+        # Deferred geometric rejections cannot compete with a qualified pose.
+        # Preserve the original pose order when filling in failed diagnostics later.
+        complete = [i for i, row in enumerate(metrics) if row['observation_score'] is not None]
+        if not complete:
+            return
+        def rank(i):
+            row = metrics[i]
+            return (row['qualified'], row['observation_score'], row['visible_pixels'],
+                    -row['center_distance_m'], -int(orders[i]))
+        best = max(complete, key=rank)
+        previous = diagnostics.get(obj['id'])
+        if previous is None or rank(best) > previous['rank']:
+            diagnostics[obj['id']] = dict(rank=rank(best), position=base[best].tolist(),
+                yaw_rad=float(headings[best]), metrics=metrics[best])
+
     screened_pairs = 0
     exact_tests = 0
     region_pose_tests = 0
@@ -105,6 +124,7 @@ def generate_candidates(
     if selected and objects:
         tree = cKDTree(positions)
         for object_index, obj in enumerate(objects):
+            deferred = []
             point = np.asarray(obj["position"], dtype=float)
             if point.shape != (3,) or not np.all(np.isfinite(point)):
                 raise ValueError("Object positions must be finite 3D points")
@@ -128,20 +148,20 @@ def generate_candidates(
                     evaluated = np.flatnonzero(admissible)
                     if not len(evaluated):
                         continue
-                    metrics = observer.evaluate(object_index, base[evaluated], headings[evaluated])
+                    metrics = observer.evaluate(object_index, base[evaluated], headings[evaluated],
+                                                candidate_only=True)
                     visible = np.zeros(len(base), dtype=bool)
                     visible[evaluated] = [row['qualified'] for row in metrics]
                     visible = visible.reshape(len(local), n_yaws)
                     metrics_by_pose = dict(zip(evaluated.tolist(), metrics))
                     rejection_counts.update(row['reason'] for row in metrics)
-                    best_index = max(range(len(metrics)), key=lambda k: (metrics[k]['qualified'], metrics[k]['observation_score'], metrics[k]['visible_pixels'], -metrics[k]['center_distance_m']))
-                    metric = metrics[best_index]
-                    best_key = (metric['qualified'], metric['observation_score'], metric['visible_pixels'], -metric['center_distance_m'])
-                    previous = diagnostics.get(obj['id'])
-                    if previous is None or best_key > tuple(previous['rank']):
-                        pose_index = evaluated[best_index]
-                        diagnostics[obj['id']] = {'rank': best_key, 'position': base[pose_index].tolist(),
-                            'yaw_rad': float(headings[pose_index]), 'metrics': metric}
+                    orders = np.asarray(local)[evaluated // n_yaws]*n_yaws + evaluated % n_yaws
+                    record_diagnostic(obj, metrics, base[evaluated], headings[evaluated], orders)
+                    skipped = np.array([i for i, row in enumerate(metrics)
+                                        if row['observation_score'] is None], dtype=int)
+                    if len(skipped):
+                        skipped_occlusion += len(skipped)
+                        deferred.append((base[evaluated[skipped]], headings[evaluated[skipped]], orders[skipped]))
                 else:
                     visible = np.asarray(camera.visible(base, headings, point), dtype=bool).reshape(len(local), n_yaws)
                 exact_tests += len(evaluated) if observer else len(local)*n_yaws
@@ -151,6 +171,13 @@ def generate_candidates(
                     supports.setdefault(index, {}).setdefault(col, set()).add(obj["id"])
                     if observer:
                         scores.setdefault(index, {}).setdefault(col, {})[obj['id']] = metrics_by_pose[row*n_yaws+col]['observation_score']
+            if observer and not diagnostics.get(obj['id'], {}).get('rank', (False,))[0]:
+                # No qualified pose exists: retain the exact best-failure diagnostic,
+                # including visibility, blocker IDs, refinement and deterministic ties.
+                for base, headings, orders in deferred:
+                    metrics = observer.evaluate(object_index, base, headings)
+                    diagnostic_recomputed += len(base)
+                    record_diagnostic(obj, metrics, base, headings, orders)
     elapsed = perf_counter() - started
     return CandidateResult(
         station_indices=selected,
@@ -164,6 +191,8 @@ def generate_candidates(
             "evaluated_object_pose_pairs": exact_tests,
             "region_pose_tests": region_pose_tests,
             "region_rejected_pose_pairs": region_rejected,
+            "occlusion_skipped_pose_pairs": skipped_occlusion,
+            "diagnostic_recomputed_pose_pairs": diagnostic_recomputed,
             **({"evaluated_point_pose_pairs": exact_tests, "exact_point_pose_tests": exact_tests}
                if observer is None else {}),
             "screened_station_object_pairs": screened_pairs,

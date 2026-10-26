@@ -191,7 +191,7 @@ class OptimizerTests(unittest.TestCase):
         self.assertEqual(r['anchors'], r['baseline']['anchors'])
         self.assertFalse(r['optimization']['lexicographic_optimal'])
 
-    def audit_case(self, alternate=True, time_limit_s=None):
+    def audit_case(self, alternate=True, time_limit_s=None, proven=True):
         supports = {0: {0: set('1234')}, 1: {0: set('125')},
                     2: {0: set('346')}, 3: {0: {'5'}}, 4: {0: {'6'}}}
         if alternate:
@@ -201,6 +201,7 @@ class OptimizerTests(unittest.TestCase):
         c, stations, targets = instance(supports, scores)
         selected = selector.select_anchors(c, stations, targets)
         self.assertEqual(selected['selected_cost'], [2, 2])
+        selected['optimization']['lexicographic_optimal'] = proven
         from observation_model import ObservationSettings
         settings = ObservationSettings()
         def evaluate(index, positions, yaws):
@@ -275,6 +276,53 @@ class OptimizerTests(unittest.TestCase):
         self.assertEqual(audit['repair_status'], 'no_audited_complete_baseline')
         self.assertEqual(audit['final']['status'], 'failed')
         self.assertEqual(audit['repairs'], [])
+
+    def test_same_cost_repair_uses_original_certificate_without_reoptimizing(self):
+        with patch.object(verification, 'optimize', side_effect=AssertionError('unneeded optimization')):
+            r = self.audit_case()
+        audit = r['optimization']['high_density_verification']
+        self.assertEqual(audit['same_cost_searches'][0]['status'], 'feasible')
+        self.assertEqual(audit['repairs'][0]['selected_cost'], [2, 2])
+        self.assertTrue(audit['original_pool_certificate_preserved'])
+
+    def test_failed_same_cost_search_falls_back_to_full_optimization(self):
+        search = dict(actions=None, status='limit_reached', elapsed_s=.01)
+        with patch.object(verification, 'find_cover_at_cost', return_value=search), \
+                patch.object(verification, 'optimize', wraps=solver.optimize) as fallback:
+            r = self.audit_case()
+        fallback.assert_called_once()
+        self.assertEqual(r['optimization']['high_density_verification']['final']['status'], 'passed')
+        self.assertEqual(r['selected_cost'], [2, 2])
+
+    def test_same_cost_search_consumes_the_shared_budget(self):
+        search = dict(actions=None, status='limit_reached', elapsed_s=2.0)
+        with patch.object(verification, 'find_cover_at_cost', return_value=search) as attempt, \
+                patch.object(verification, 'optimize', side_effect=AssertionError('budget exhausted')):
+            r = self.audit_case(time_limit_s=1)
+        self.assertLessEqual(attempt.call_args.kwargs['time_limit_s'], 1)
+        self.assertEqual(r['optimization']['high_density_verification']['repair_status'], 'audited_baseline_fallback')
+
+    def test_same_cost_search_requires_original_certificate_and_can_be_disabled(self):
+        with patch.object(verification, 'find_cover_at_cost', side_effect=AssertionError('no certificate')):
+            r = self.audit_case(proven=False)
+        self.assertFalse(r['optimization']['lexicographic_optimal'])
+        with patch.object(verification.settings, 'SAME_COST_REPAIR_TIME_LIMIT_S', 0), \
+                patch.object(verification, 'find_cover_at_cost', side_effect=AssertionError('disabled')):
+            r = self.audit_case()
+        self.assertEqual(r['selected_cost'], [2, 2])
+
+    def test_fixed_cost_search_checks_actual_coverage_and_station_photo_links(self):
+        supports = {0: {0: {'a'}}, 1: {0: {'b'}}}
+        for bits in ([1, 0, 1, 1], [1, 1, 1, 0], [.5, 1, 1, 1]):
+            response = SimpleNamespace(status=0, message='invalid mock', x=bits)
+            with patch.object(solver, 'milp', return_value=response):
+                r = solver.find_cover_at_cost(supports, ['a', 'b'], [2, 2], time_limit_s=1)
+            self.assertIsNone(r['actions'])
+            self.assertEqual(r['status'], 'invalid_or_failed')
+        r = solver.find_cover_at_cost(supports, ['a', 'b'], [2, 2], time_limit_s=1)
+        self.assertEqual(r['actions'], [(0, 0), (1, 0)])
+        missing = solver.find_cover_at_cost(supports, ['a', 'b', 'c'], [2, 2], time_limit_s=1)
+        self.assertIsNone(missing['actions'])
 
 
 if __name__ == '__main__':

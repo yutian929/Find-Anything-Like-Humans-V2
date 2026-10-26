@@ -95,6 +95,46 @@ def _equivalent_cover_model(supports):
     return reduced, action_map
 
 
+def _photo_constraints(supports, stations, objects, actions, k, photo_limit, *, exact_photos=False):
+    """Shared station/photo model; row order is stable across both solve modes."""
+    ns, na, no = len(stations), len(actions), len(objects)
+    station_index = {i: j for j, i in enumerate(stations)}
+    object_index = {obj: j for j, obj in enumerate(objects)}
+    station_sets = {i: set().union(*supports[i].values()) for i in stations}
+    rr, cc, vv = [], [], []
+    lower, upper = [1] * no, [np.inf] * no
+    station_actions = {i: [] for i in stations}
+    for j, (i, y) in enumerate(actions):
+        a = ns + j
+        station_actions[i].append(a)
+        for obj in sorted(supports[i][y]):
+            rr.append(object_index[obj]); cc.append(a); vv.append(1)
+        row = len(lower)
+        rr.extend([row, row]); cc.extend([a, station_index[i]]); vv.extend([1, -1])
+        lower.append(-np.inf); upper.append(0)
+    for i in stations:
+        row = len(lower)
+        for col, value in [(station_index[i], 1), *[(a, -1) for a in station_actions[i]]]:
+            rr.append(row); cc.append(col); vv.append(value)
+        lower.append(-np.inf); upper.append(0)
+    # These station-cover rows are implied for integer solutions, but are
+    # stronger than individual y<=x links in the LP relaxation: multiple
+    # fractional photos at one station must not multiply its coverage.
+    for obj in objects:
+        row = len(lower)
+        for i in stations:
+            if obj in station_sets[i]:
+                rr.append(row); cc.append(station_index[i]); vv.append(1)
+        lower.append(1); upper.append(np.inf)
+    row = len(lower)
+    rr.extend([row] * ns); cc.extend(range(ns)); vv.extend([1] * ns)
+    lower.append(k); upper.append(k)
+    row = len(lower)
+    rr.extend([row] * na); cc.extend(range(ns, ns + na)); vv.extend([1] * na)
+    lower.append(photo_limit if exact_photos else 0); upper.append(photo_limit)
+    return rr, cc, vv, lower, upper
+
+
 def optimize(supports, object_ids, baseline_actions, *, time_limit_s=None):
     """Return action keys plus auditable solver metadata; never worsen baseline.
 
@@ -214,37 +254,8 @@ def optimize(supports, object_ids, baseline_actions, *, time_limit_s=None):
         k = cost(best)[0]
         stage = 'stage2'
         metadata[stage]['fixed_anchor_count'] = k
-        rr, cc, vv = [], [], []
-        lower, upper = [1] * no, [np.inf] * no
-        station_actions = {i: [] for i in stations}
-        for j, (i, y) in enumerate(actions):
-            a = ns + j
-            station_actions[i].append(a)
-            for obj in sorted(supports[i][y]):
-                rr.append(object_index[obj]); cc.append(a); vv.append(1)
-            row = len(lower)
-            rr.extend([row, row]); cc.extend([a, station_index[i]]); vv.extend([1, -1])
-            lower.append(-np.inf); upper.append(0)
-        for i in stations:
-            row = len(lower)
-            for col, value in [(station_index[i], 1), *[(a, -1) for a in station_actions[i]]]:
-                rr.append(row); cc.append(col); vv.append(value)
-            lower.append(-np.inf); upper.append(0)
-        # These station-cover rows are implied for integer solutions, but are
-        # stronger than individual y<=x links in the LP relaxation: multiple
-        # fractional photos at one station must not multiply its coverage.
-        for obj in objects:
-            row = len(lower)
-            for i in stations:
-                if obj in station_sets[i]:
-                    rr.append(row); cc.append(station_index[i]); vv.append(1)
-            lower.append(1); upper.append(np.inf)
-        row = len(lower)
-        rr.extend([row] * ns); cc.extend(range(ns)); vv.extend([1] * ns)
-        lower.append(k); upper.append(k)
-        row = len(lower)
-        rr.extend([row] * na); cc.extend(range(ns, ns + na)); vv.extend([1] * na)
-        lower.append(0); upper.append(cost(best)[1])
+        rr, cc, vv, lower, upper = _photo_constraints(
+            supports, stations, objects, actions, k, cost(best)[1])
         result = solve(stage, [0] * ns + [1] * na, rr, cc, vv, lower, upper)
         if result is not None:
             bits = _binary(result, ns + na)
@@ -266,3 +277,57 @@ def optimize(supports, object_ids, baseline_actions, *, time_limit_s=None):
         metadata['fallback_reason'] = f'{stage}: {exc}'
         metadata['lexicographic_optimal'] = False
     return finish()
+
+
+def find_cover_at_cost(supports, object_ids, target_cost, *, time_limit_s):
+    """Try a bounded feasibility search at a previously certified resource cost.
+
+    This function does NOT certify optimality. The caller must own the original
+    pool certificate and independently audit returned actions. Failure/timeout
+    merely returns no solution, allowing the regular optimizer to take over.
+    """
+    if (len(target_cost) != 2 or any(isinstance(v, bool) or not isinstance(v, int) or v <= 0
+                                   for v in target_cost)):
+        raise ValueError('Target cost must contain positive integer station/photo counts')
+    if (isinstance(time_limit_s, bool) or not isinstance(time_limit_s, (int, float))
+            or not math.isfinite(time_limit_s) or time_limit_s <= 0):
+        raise ValueError('Feasibility time limit must be finite and positive')
+    targets = set(object_ids)
+    if not targets or len(targets) != len(object_ids):
+        raise ValueError('Feasibility targets must be nonempty and unique')
+    if not set().union(*(ids for ds in supports.values() for ids in ds.values())) <= targets:
+        raise ValueError('Supports contain unknown target IDs')
+    reduced, _ = _equivalent_cover_model(supports)
+    stations = sorted(reduced)
+    actions = sorted((i, y) for i, ds in reduced.items() for y in ds)
+    ns, na = len(stations), len(actions)
+    outcome = dict(actions=None, status='not_run', target_cost=list(target_cost), elapsed_s=0.0,
+                   time_limit_s=time_limit_s)
+    if not actions:
+        outcome['status'] = 'infeasible'
+        return outcome
+    rr, cc, vv, lower, upper = _photo_constraints(reduced, stations, sorted(targets), actions,
+        *target_cost, exact_photos=True)
+    matrix = coo_matrix((vv, (rr, cc)), shape=(len(lower), ns+na)).tocsc()
+    start = perf_counter()
+    try:
+        try:
+            result = milp(c=np.zeros(ns+na), integrality=np.ones(ns+na), bounds=Bounds(0, 1),
+                constraints=LinearConstraint(matrix, lower, upper),
+                options={'time_limit': time_limit_s, 'mip_rel_gap': 0.0})
+        finally:
+            outcome['elapsed_s'] = perf_counter()-start
+        outcome.update(status={0: 'feasible', 1: 'limit_reached', 2: 'infeasible'}.get(result.status, 'solver_error'),
+                       solver_status=int(result.status), message=str(result.message))
+        if result.status in (0, 1):
+            bits = _binary(result, ns+na)
+            if bits is not None:
+                chosen = validate_actions([actions[j] for j in np.flatnonzero(bits[ns:])], supports, targets)
+                selected = {stations[j] for j in np.flatnonzero(bits[:ns])}
+                if selected != {i for i, _ in chosen} or cost(chosen) != tuple(target_cost):
+                    raise ValueError('Invalid fixed-cost station/photo association')
+                outcome.update(actions=chosen, status='feasible')
+    except (ValueError, RuntimeError, TypeError, AttributeError, OverflowError) as exc:
+        outcome.update(status='invalid_or_failed', error=str(exc))
+    LOGGER.info('Same-cost search: %s at %s, %.3fs', outcome['status'], target_cost, outcome['elapsed_s'])
+    return outcome
