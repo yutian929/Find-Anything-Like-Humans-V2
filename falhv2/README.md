@@ -11,6 +11,15 @@ python -B falhv2/main.py
 
 统一入口一次完成安全区域提取、观察候选计算、基线与两阶段优化、复核重选和导出。默认生成 `outputs/safe_regions.json`、`safe_regions.svg`、`anchor_plan.json`、`anchor_plan.html`、`anchor_plan.svg`、`anchor_plan.supports.json`，无需先运行其他模块。地图编辑器和真机相机标定仍是独立的输入准备工具。
 
+候选观察默认按目标物体使用 **4 个进程**并行，每个任务仍读取全部物体作为遮挡体。也可选择线程或立即回退串行：
+
+```bash
+python -B falhv2/main.py --observation-executor threads --observation-workers 4
+python -B falhv2/main.py --observation-workers 1
+```
+
+任务结果按原物体顺序合并，MILP 和最终复核保持原流程。三轮完整运行中位数 **23.19 s → 13.86 s（减少 40.2%）**，候选生成 **13.97 s → 4.71 s**；完整 supports、评分、热图、诊断和最终方案一致。4 线程单次为 15.72 s，因此默认选择 4 进程。实验对照与参数说明见[逐物体并行记录](../docs/falhv2/parallel_observation_20261026.md)。
+
 2026-10-26 起，观测计算使用 NumPy 批量矩阵乘法、列式数组与批量统计，以及 Shapely/GEOS 双精度凸包和裁剪。安装依赖仍在同一个环境中执行：
 
 ```bash
@@ -64,12 +73,16 @@ Open3D 使用 Float32；当前地图有少量候选评分差异，且包含启�
 | `OBSERVATION_DEFAULTS.radial_inner_weight` / `radial_outer_weight` | 1.0 / 0.5 | 距离权重内外端点，线性下降 |
 | `OBSERVATION_DEFAULTS.sample_grid` / `refinement_grid` | 12 / 36 | 常规与临界遮挡采样边长 |
 | `YAW_STEP_DEG` | 30 | 每站拍摄方向间隔，度 |
+| `OBSERVATION_WORKERS` | 4 | 逐物体候选计算的 worker 数；1 恢复串行 |
+| `OBSERVATION_EXECUTOR` | `processes` | 候选阶段使用 `threads` 或 `processes` |
 | `SELECTION_TIME_LIMIT_S` | `None` | 全部 MILP 调用共享预算，秒；`None` 不限时 |
 | `AUDIT_SAMPLE_GRID` | 96 | 最终复核网格边长；实际不低于临界采样边长 |
 | `MAX_AUDIT_RETRIES` | 3 | 复核缺口重选次数；0 时直接尝试基线兜底 |
 | `SAME_COST_REPAIR_TIME_LIMIT_S` | 2.0 | 每次同成本修复的 MILP 秒数上限，受全局剩余预算约束；0 关闭 |
 
 `OBSERVATION_DEFAULTS` 是字典，修改其中的数值即可。相机 JSON 的 `observation_quality` 若显式定义同名字段，则覆盖该字典；目前默认相机 JSON 只定义距离范围，所以上表观察参数均由 `config.py` 生效。CLI 的 `--yaw-step-deg` 和 `--selection-time-limit-s` 覆盖规划默认值。Python `plan()` 未传入或传入 `None` 时采用对应配置值。
+
+`--observation-workers`、`--observation-executor` 覆盖并行配置；`main.plan()` 对应参数为 `observation_workers`、`observation_executor`。进程方式的 Python API 调用应放在 `if __name__ == '__main__':` 入口保护中；交互式环境可选线程或单 worker。空输入、无站位或单目标自动使用串行，实际执行方式记录在 `statistics.candidate_workers/candidate_executor`。
 
 运行结果的 `observation_settings` 保存合并后的观察参数，`configuration` 保存实际方向间隔、时间预算和复核配置。修改后需重新运行规划器，已有 HTML/JSON 不会自动刷新。本文的 0.5 门槛、96×96 复核、三次重选及 4 站10张验收结果均对应默认配置。
 

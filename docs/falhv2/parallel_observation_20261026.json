@@ -1,0 +1,388 @@
+{
+  "date": "2026-10-26",
+  "baseline_commit": "30c1ebb",
+  "environment": "conda test",
+  "python": "3.10.19",
+  "threadpoolctl": "3.7.0",
+  "default_workers": 4,
+  "default_executor": "processes",
+  "exploration_runs": [
+    {
+      "mode": "serial",
+      "workers": 1,
+      "wall_after_import_s": 22.881228446029127,
+      "generation_s": 14.02438371104654,
+      "selection_s": 7.871391199994832,
+      "cost": [
+        4,
+        10
+      ],
+      "audit": "passed",
+      "supports_equal": true,
+      "plan_fields_equal": {
+        "anchors": true,
+        "baseline": true,
+        "object_diagnostics": true,
+        "covered_object_ids": true,
+        "optimality": true
+      },
+      "statistics_equal": true,
+      "wall_s": 23.468016669969074
+    },
+    {
+      "mode": "serial-limit",
+      "workers": 1,
+      "wall_after_import_s": 21.614060329971835,
+      "generation_s": 12.730092916986905,
+      "selection_s": 7.892218966968358,
+      "cost": [
+        4,
+        10
+      ],
+      "audit": "passed",
+      "supports_equal": true,
+      "plan_fields_equal": {
+        "anchors": true,
+        "baseline": true,
+        "object_diagnostics": true,
+        "covered_object_ids": true,
+        "optimality": true
+      },
+      "statistics_equal": true,
+      "wall_s": 22.200126346899197
+    },
+    {
+      "mode": "threads",
+      "workers": 2,
+      "wall_after_import_s": 16.93656852596905,
+      "generation_s": 8.019355342024937,
+      "selection_s": 7.922117803012952,
+      "cost": [
+        4,
+        10
+      ],
+      "audit": "passed",
+      "supports_equal": true,
+      "plan_fields_equal": {
+        "anchors": true,
+        "baseline": true,
+        "object_diagnostics": true,
+        "covered_object_ids": true,
+        "optimality": true
+      },
+      "statistics_equal": true,
+      "wall_s": 17.552832020097412
+    },
+    {
+      "mode": "threads",
+      "workers": 4,
+      "wall_after_import_s": 15.516772894072346,
+      "generation_s": 6.623477283050306,
+      "selection_s": 7.911995636997744,
+      "cost": [
+        4,
+        10
+      ],
+      "audit": "passed",
+      "supports_equal": true,
+      "plan_fields_equal": {
+        "anchors": true,
+        "baseline": true,
+        "object_diagnostics": true,
+        "covered_object_ids": true,
+        "optimality": true
+      },
+      "statistics_equal": true,
+      "wall_s": 16.17669042106718
+    },
+    {
+      "mode": "threads",
+      "workers": 8,
+      "wall_after_import_s": 16.713049886981025,
+      "generation_s": 7.836730391951278,
+      "selection_s": 7.924593738978729,
+      "cost": [
+        4,
+        10
+      ],
+      "audit": "passed",
+      "supports_equal": true,
+      "plan_fields_equal": {
+        "anchors": true,
+        "baseline": true,
+        "object_diagnostics": true,
+        "covered_object_ids": true,
+        "optimality": true
+      },
+      "statistics_equal": true,
+      "wall_s": 17.35536458599381
+    },
+    {
+      "mode": "processes",
+      "workers": 2,
+      "wall_after_import_s": 16.09504388400819,
+      "generation_s": 7.294969436014071,
+      "selection_s": 7.818258896935731,
+      "cost": [
+        4,
+        10
+      ],
+      "audit": "passed",
+      "supports_equal": true,
+      "plan_fields_equal": {
+        "anchors": true,
+        "baseline": true,
+        "object_diagnostics": true,
+        "covered_object_ids": true,
+        "optimality": true
+      },
+      "statistics_equal": true,
+      "wall_s": 16.730603710981086
+    },
+    {
+      "mode": "processes",
+      "workers": 4,
+      "wall_after_import_s": 13.59647072001826,
+      "generation_s": 4.705162173020653,
+      "selection_s": 7.877889762981795,
+      "cost": [
+        4,
+        10
+      ],
+      "audit": "passed",
+      "supports_equal": true,
+      "plan_fields_equal": {
+        "anchors": true,
+        "baseline": true,
+        "object_diagnostics": true,
+        "covered_object_ids": true,
+        "optimality": true
+      },
+      "statistics_equal": true,
+      "wall_s": 14.251164662069641
+    },
+    {
+      "mode": "processes",
+      "workers": 8,
+      "wall_after_import_s": 13.178743388038129,
+      "generation_s": 4.37910391506739,
+      "selection_s": 7.81442212802358,
+      "cost": [
+        4,
+        10
+      ],
+      "audit": "passed",
+      "supports_equal": true,
+      "plan_fields_equal": {
+        "anchors": true,
+        "baseline": true,
+        "object_diagnostics": true,
+        "covered_object_ids": true,
+        "optimality": true
+      },
+      "statistics_equal": true,
+      "wall_s": 13.80815610801801
+    }
+  ],
+  "cli_runs": {
+    "baseline-cli-1": {
+      "label": "baseline-cli-1",
+      "wall_s": 23.188904920010827,
+      "generation_s": 14.042485695914365,
+      "selection_s": 7.889930867939256,
+      "supports_equal": true,
+      "plan_fields_equal": {
+        "anchors": true,
+        "baseline": true,
+        "object_diagnostics": true,
+        "covered_object_ids": true,
+        "optimality": true
+      },
+      "statistics_equal": true,
+      "workers": 1,
+      "executor": "serial",
+      "cost": [
+        4,
+        10
+      ],
+      "audit": "passed"
+    },
+    "baseline-cli-2": {
+      "label": "baseline-cli-2",
+      "wall_s": 23.116423745057546,
+      "generation_s": 13.931467644986697,
+      "selection_s": 7.948884002049454,
+      "supports_equal": true,
+      "plan_fields_equal": {
+        "anchors": true,
+        "baseline": true,
+        "object_diagnostics": true,
+        "covered_object_ids": true,
+        "optimality": true
+      },
+      "statistics_equal": true,
+      "workers": 1,
+      "executor": "serial",
+      "cost": [
+        4,
+        10
+      ],
+      "audit": "passed"
+    },
+    "baseline-cli-3": {
+      "label": "baseline-cli-3",
+      "wall_s": 23.1934068959672,
+      "generation_s": 13.965168594033457,
+      "selection_s": 7.923843338969164,
+      "supports_equal": true,
+      "plan_fields_equal": {
+        "anchors": true,
+        "baseline": true,
+        "object_diagnostics": true,
+        "covered_object_ids": true,
+        "optimality": true
+      },
+      "statistics_equal": true,
+      "workers": 1,
+      "executor": "serial",
+      "cost": [
+        4,
+        10
+      ],
+      "audit": "passed"
+    },
+    "parallel-cli-1": {
+      "label": "parallel-cli-1",
+      "wall_s": 13.861798791913316,
+      "generation_s": 4.710596854914911,
+      "selection_s": 7.892915345029905,
+      "supports_equal": true,
+      "plan_fields_equal": {
+        "anchors": true,
+        "baseline": true,
+        "object_diagnostics": true,
+        "covered_object_ids": true,
+        "optimality": true
+      },
+      "statistics_equal": true,
+      "workers": 4,
+      "executor": "processes",
+      "cost": [
+        4,
+        10
+      ],
+      "audit": "passed"
+    },
+    "parallel-cli-2": {
+      "label": "parallel-cli-2",
+      "wall_s": 13.8591063269414,
+      "generation_s": 4.7823211590293795,
+      "selection_s": 7.829316243994981,
+      "supports_equal": true,
+      "plan_fields_equal": {
+        "anchors": true,
+        "baseline": true,
+        "object_diagnostics": true,
+        "covered_object_ids": true,
+        "optimality": true
+      },
+      "statistics_equal": true,
+      "workers": 4,
+      "executor": "processes",
+      "cost": [
+        4,
+        10
+      ],
+      "audit": "passed"
+    },
+    "parallel-cli-3": {
+      "label": "parallel-cli-3",
+      "wall_s": 13.732676603016444,
+      "generation_s": 4.676046397071332,
+      "selection_s": 7.805577359977178,
+      "supports_equal": true,
+      "plan_fields_equal": {
+        "anchors": true,
+        "baseline": true,
+        "object_diagnostics": true,
+        "covered_object_ids": true,
+        "optimality": true
+      },
+      "statistics_equal": true,
+      "workers": 4,
+      "executor": "processes",
+      "cost": [
+        4,
+        10
+      ],
+      "audit": "passed"
+    },
+    "threads-cli-4": {
+      "label": "threads-cli-4",
+      "wall_s": 15.723704169038683,
+      "generation_s": 6.649804136017337,
+      "selection_s": 7.856212391983718,
+      "supports_equal": true,
+      "plan_fields_equal": {
+        "anchors": true,
+        "baseline": true,
+        "object_diagnostics": true,
+        "covered_object_ids": true,
+        "optimality": true
+      },
+      "statistics_equal": true,
+      "workers": 4,
+      "executor": "threads",
+      "cost": [
+        4,
+        10
+      ],
+      "audit": "passed"
+    },
+    "rollback-cli-1": {
+      "label": "rollback-cli-1",
+      "wall_s": 23.124006879981607,
+      "generation_s": 13.945950139081106,
+      "selection_s": 7.899804475018755,
+      "supports_equal": true,
+      "plan_fields_equal": {
+        "anchors": true,
+        "baseline": true,
+        "object_diagnostics": true,
+        "covered_object_ids": true,
+        "optimality": true
+      },
+      "statistics_equal": true,
+      "workers": 1,
+      "executor": "serial",
+      "cost": [
+        4,
+        10
+      ],
+      "audit": "passed"
+    }
+  },
+  "medians": {
+    "baseline": {
+      "wall_s": 23.188904920010827,
+      "generation_s": 13.965168594033457,
+      "selection_s": 7.923843338969164
+    },
+    "parallel": {
+      "wall_s": 13.8591063269414,
+      "generation_s": 4.710596854914911,
+      "selection_s": 7.829316243994981
+    }
+  },
+  "wall_reduction_percent": 40.23389041117803,
+  "wall_speedup": 1.6731890479065574,
+  "candidate_speedup": 2.9646282677454288,
+  "input_sha256": {
+    "map_aabb.json": "ce7e2b9a78def092b7a89bbab82c2a08b9f2683d3c82e2b581c2fdef5de855b8",
+    "robot.json": "4616f1de03e61224927c735d907d2aeca9279e9f868e1689a013fc359f245c0d",
+    "camera.d435i.json": "446db06fe2bdf61a4df335574219b49324c604c99d26796db826024521716ebe",
+    "map_point.json": "1c402ec42d884ada47feed833a2fd80e993500199db88fc9e219cb02c6e59ada"
+  },
+  "python_tests": 106,
+  "node_suites": 2
+}

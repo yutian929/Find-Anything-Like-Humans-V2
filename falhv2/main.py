@@ -33,7 +33,7 @@ LOGGER = logging.getLogger(__name__)
 
 
 def plan(scene, robot_config, camera_config, *, yaw_step_deg=None, selection_time_limit_s=None,
-         ray_backend='numpy'):
+         ray_backend='numpy', observation_workers=None, observation_executor=None):
     """Select object-driven anchors directly from safe regions; no route is built.
 
     Targets are world-frame 3D centers; base positions are (x, y, 0).
@@ -43,6 +43,12 @@ def plan(scene, robot_config, camera_config, *, yaw_step_deg=None, selection_tim
     yaw_step_deg = settings.YAW_STEP_DEG if yaw_step_deg is None else yaw_step_deg
     selection_time_limit_s = settings.SELECTION_TIME_LIMIT_S if selection_time_limit_s is None else selection_time_limit_s
     audit_parameters = verification.audit_parameters()
+    observation_workers = settings.OBSERVATION_WORKERS if observation_workers is None else observation_workers
+    observation_executor = settings.OBSERVATION_EXECUTOR if observation_executor is None else observation_executor
+    if isinstance(observation_workers, bool) or not isinstance(observation_workers, int) or observation_workers < 1:
+        raise ValueError('observation workers must be a positive integer')
+    if observation_executor not in ('threads', 'processes'):
+        raise ValueError('observation executor must be threads or processes')
     if ray_backend not in ('numpy', 'open3d'):
         raise ValueError('ray_backend must be numpy or open3d')
     if selection_time_limit_s is not None and (isinstance(selection_time_limit_s, bool)
@@ -59,7 +65,8 @@ def plan(scene, robot_config, camera_config, *, yaw_step_deg=None, selection_tim
     preprocessing = perf_counter() - started
     LOGGER.info('2/5 计算观察候选：%d 个站位、%d 个目标', len(stations), len(objects))
     candidates = generate_candidates(stations, objects, camera, yaw_step_deg=yaw_step_deg,
-                                     ray_backend=ray_backend)
+                                     ray_backend=ray_backend, workers=observation_workers,
+                                     executor=observation_executor)
     started = perf_counter()
     LOGGER.info('3/5 加权基线与两阶段整数优化')
     selected = select_anchors(candidates, stations, [o['id'] for o in objects],
@@ -91,7 +98,9 @@ def plan(scene, robot_config, camera_config, *, yaw_step_deg=None, selection_tim
         'configuration': {'robot': robot_config, 'camera': camera_config, 'yaw_step_deg': yaw_step_deg,
                           'selection_time_limit_s': selection_time_limit_s, 'audit': audit_parameters,
                           'candidate_ray_backend': ray_backend if observer else None,
-                          'verification_ray_backend': 'numpy' if observer else None},
+                          'verification_ray_backend': 'numpy' if observer else None,
+                          'observation_workers': observation_workers,
+                          'observation_executor': observation_executor},
         'statistics': {'safe_regions_and_station_seconds': preprocessing, 'selection_seconds': selection,
                        'region_count': len(regions['regions']), 'safe_station_count': len(stations),
                        **candidates.stats},
@@ -114,6 +123,10 @@ def main(argv=None):
                         help='导出合格支持关系、连续得分及热力图（默认开启）')
     parser.add_argument('--ray-backend', choices=('numpy', 'open3d'), default='numpy',
                         help='候选射线后端；Open3D 为 Float32 实验后端，最终复核始终使用 NumPy Float64')
+    parser.add_argument('--observation-workers', type=int, default=None,
+                        help='逐物体候选计算的 worker 数；默认读取 config.py；1 恢复串行')
+    parser.add_argument('--observation-executor', choices=('threads', 'processes'), default=None,
+                        help='候选并行方式；默认读取 config.py')
     parser.add_argument('--output', type=Path, default=settings.ANCHOR_PLAN_PATH)
     args = parser.parse_args(argv)
     try:
@@ -126,7 +139,9 @@ def main(argv=None):
         camera = settings.read_input(args.camera)
         result, regions, stations, candidates = plan(scene, robot, camera, yaw_step_deg=args.yaw_step_deg,
                                                        selection_time_limit_s=args.selection_time_limit_s,
-                                                       ray_backend=args.ray_backend)
+                                                       ray_backend=args.ray_backend,
+                                                       observation_workers=args.observation_workers,
+                                                       observation_executor=args.observation_executor)
         LOGGER.info('5/5 导出安全区域、计划与离线可视化')
         export_plan(args.output, scene, camera, result, regions, stations, candidates,
                     include_supports=args.save_supports)

@@ -2,6 +2,10 @@
 from __future__ import annotations
 
 from collections import Counter
+from concurrent.futures import ThreadPoolExecutor, ProcessPoolExecutor
+from functools import partial
+import multiprocessing
+from threadpoolctl import threadpool_limits
 from dataclasses import dataclass, field
 import math
 from time import perf_counter
@@ -11,10 +15,10 @@ from scipy.spatial import cKDTree
 
 try:
     from . import config as settings
-    from .observation_model import PointCamera, BoxObserver, REASONS, validate_objects
+    from .observation_model import PointCamera, BoxObserver, ObservationSettings, REASONS, validate_objects
 except ImportError:
     import config as settings
-    from observation_model import PointCamera, BoxObserver, REASONS, validate_objects
+    from observation_model import PointCamera, BoxObserver, ObservationSettings, REASONS, validate_objects
 
 
 @dataclass(frozen=True)
@@ -59,7 +63,7 @@ def stations_from_regions(safe_regions: dict) -> list[Station]:
     return stations
 
 
-def generate_candidates(
+def _generate_candidates_serial(
     stations: list[Station],
     objects: list[dict],
     camera: PointCamera,
@@ -67,6 +71,9 @@ def generate_candidates(
     yaw_step_deg: float | None = None,
     station_indices: list[int] | None = None,
     ray_backend: str = 'numpy',
+    _target_indices=None,
+    _observation_settings=None,
+    _ray_threads=0,
 ) -> CandidateResult:
     """Build weighted supports after height, mount and frustum region screening.
 
@@ -89,7 +96,7 @@ def generate_candidates(
     positions = np.asarray([by_index[index].position for index in selected], dtype=float).reshape(-1, 2)
     supports: dict[int, dict[int, set[str]]] = {}
     scores: dict[int, dict[int, dict[str, float]]] = {}
-    observer = BoxObserver(camera, objects, ray_backend=ray_backend) if objects and 'aabb' in objects[0] else None
+    observer = BoxObserver(camera, objects, _observation_settings, ray_backend=ray_backend, ray_threads=_ray_threads) if objects and 'aabb' in objects[0] else None
     rejection_counts = Counter()
     diagnostics = {}
     skipped_occlusion = 0
@@ -126,7 +133,8 @@ def generate_candidates(
     radius = camera.max_distance + camera.offset_xy_norm + 1e-7
     if selected and objects:
         tree = cKDTree(positions)
-        for object_index, obj in enumerate(objects):
+        for object_index in (range(len(objects)) if _target_indices is None else _target_indices):
+            obj = objects[object_index]
             deferred = []
             point = np.asarray(obj["position"], dtype=float)
             if point.shape != (3,) or not np.all(np.isfinite(point)):
@@ -209,6 +217,88 @@ def generate_candidates(
             "observation_reasons": dict(rejection_counts),
         },
     )
+
+
+# Each spawned worker owns this context. Threads instead receive a read-only
+# partial; no task ever mutates another task's supports/scores/diagnostics.
+_process_context = None
+_process_blas_limit = None
+
+
+def _initialize_candidate_worker(context):
+    global _process_context, _process_blas_limit
+    _process_context = context
+    _process_blas_limit = threadpool_limits(limits=1, user_api='blas')
+
+
+def _evaluate_candidate_target(index, context=None):
+    args, kwargs = _process_context if context is None else context
+    return _generate_candidates_serial(*args, **kwargs, _target_indices=(index,))
+
+
+def generate_candidates(stations: list[Station], objects: list[dict], camera: PointCamera, *,
+                        yaw_step_deg: float | None = None, station_indices: list[int] | None = None,
+                        ray_backend: str = 'numpy', workers: int = 1,
+                        executor: str = 'processes') -> CandidateResult:
+    """Evaluate targets independently, then merge in the original object order.
+
+    Every task retains the full scene as occluders. workers=1 executes the serial
+    reference without creating an executor. Process workers use spawn, so Python
+    scripts calling this API must protect their entry point with an __main__ guard.
+    """
+    if isinstance(workers, bool) or not isinstance(workers, int) or workers < 1:
+        raise ValueError('observation workers must be a positive integer')
+    if executor not in ('threads', 'processes'):
+        raise ValueError('observation executor must be threads or processes')
+    started = perf_counter()
+    objects = validate_objects(objects)
+    # Resolve parent configuration before spawn: workers must not reread defaults
+    # that may have been changed by an API caller in this process.
+    step = settings.YAW_STEP_DEG if yaw_step_deg is None else yaw_step_deg
+    kwargs = dict(yaw_step_deg=step, station_indices=station_indices, ray_backend=ray_backend)
+    if workers == 1 or len(objects) < 2 or not stations or (station_indices is not None and len(station_indices) == 0):
+        result = _generate_candidates_serial(stations, objects, camera, **kwargs)
+        actual, execution = 1, 'serial'
+    else:
+        actual, execution = min(workers, len(objects)), executor
+        if objects and 'aabb' in objects[0]:
+            kwargs['_observation_settings'] = ObservationSettings.from_config(camera.config)
+        # Limit nested Open3D threads independently of the outer worker count.
+        kwargs['_ray_threads'] = 1
+        # Build an empty result through the same validation/metadata path before
+        # launching workers; invalid inputs fail in the calling process.
+        result = _generate_candidates_serial(stations, objects, camera, **kwargs, _target_indices=())
+        context = ((stations, objects, camera), kwargs)
+        if executor == 'threads':
+            # One context around the whole pool; threadpoolctl limits are global
+            # to the process, so never enter competing contexts in worker threads.
+            with threadpool_limits(limits=1, user_api='blas'), ThreadPoolExecutor(max_workers=actual) as pool:
+                parts = list(pool.map(partial(_evaluate_candidate_target, context=context), range(len(objects))))
+        else:
+            with ProcessPoolExecutor(max_workers=actual, mp_context=multiprocessing.get_context('spawn'),
+                                     initializer=_initialize_candidate_worker, initargs=(context,)) as pool:
+                parts = list(pool.map(_evaluate_candidate_target, range(len(objects))))
+        counter_fields = ('evaluated_object_pose_pairs', 'region_pose_tests', 'region_rejected_pose_pairs',
+                          'occlusion_skipped_pose_pairs', 'diagnostic_recomputed_pose_pairs',
+                          'evaluated_point_pose_pairs', 'exact_point_pose_tests', 'screened_station_object_pairs')
+        reasons = Counter()
+        for part in parts:
+            for key in counter_fields:
+                if key in result.stats:
+                    result.stats[key] += part.stats[key]
+            reasons.update(part.stats['observation_reasons'])
+            result.diagnostics.update(part.diagnostics)
+            for station, directions in part.supports.items():
+                for yaw, ids in directions.items():
+                    result.supports.setdefault(station, {}).setdefault(yaw, set()).update(ids)
+            for station, directions in part.scores.items():
+                for yaw, scores in directions.items():
+                    result.scores.setdefault(station, {}).setdefault(yaw, {}).update(scores)
+        result.stats['observation_reasons'] = dict(reasons)
+    elapsed = perf_counter()-started
+    result.stats.update(candidate_workers=actual, candidate_executor=execution,
+                        elapsed_s=elapsed, generation_seconds=elapsed)
+    return result
 
 
 def object_heatmaps(candidates, object_ids):
