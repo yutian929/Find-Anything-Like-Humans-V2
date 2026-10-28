@@ -8,12 +8,12 @@ import unittest
 
 import numpy as np
 
-sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
-from observation_model import PointCamera
-from anchor_candidates import Station, CandidateResult, generate_candidates
-from anchor_selector import select_anchors_greedy as select_anchors
-from main import plan
-from observation_model import BoxObserver, ObservationSettings, ray_box_entry, validate_objects
+sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
+from falhv2.anchor_planners.observation_model import PointCamera
+from falhv2.anchor_planners.anchor_candidates import Station, CandidateResult, generate_candidates
+from falhv2.anchor_planners.anchor_selector import select_anchors_greedy as select_anchors
+from falhv2.anchor_planners.pipeline import plan
+from falhv2.anchor_planners.observation_model import BoxObserver, ObservationSettings, ray_box_entry, validate_objects
 from test_anchor_common import config
 
 

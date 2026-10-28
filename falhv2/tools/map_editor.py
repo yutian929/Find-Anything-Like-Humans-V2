@@ -2,10 +2,7 @@
 
 import argparse
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
-try:
-    from . import config as settings
-except ImportError:
-    import config as settings
+from ..config import defaults as settings
 
 PAGE = settings.EDITOR_PAGE
 

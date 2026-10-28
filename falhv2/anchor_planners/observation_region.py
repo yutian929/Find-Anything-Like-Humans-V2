@@ -10,11 +10,7 @@ from __future__ import annotations
 
 import numpy as np
 
-try:
-    from . import config as settings
-except ImportError:
-    import config as settings
-
+from ..config import defaults as settings
 
 def camera_poses(camera, positions, yaws):
     positions = np.asarray(positions, dtype=float).reshape(-1, 2)

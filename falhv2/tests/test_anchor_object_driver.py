@@ -7,10 +7,10 @@ import unittest
 
 import numpy as np
 
-sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
-from observation_model import PointCamera
-from anchor_candidates import Station
-from anchor_candidates import generate_candidates as generate
+sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
+from falhv2.anchor_planners.observation_model import PointCamera
+from falhv2.anchor_planners.anchor_candidates import Station
+from falhv2.anchor_planners.anchor_candidates import generate_candidates as generate
 
 
 class OffsetCamera:

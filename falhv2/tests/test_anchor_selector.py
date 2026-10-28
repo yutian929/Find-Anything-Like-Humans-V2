@@ -11,10 +11,10 @@ import unittest
 import numpy as np
 
 ROOT = Path(__file__).resolve().parents[1]
-sys.path.insert(0, str(ROOT))
-from main import plan
-from observation_model import PointCamera
-from anchor_candidates import stations_from_regions
+sys.path.insert(0, str(ROOT.parent))
+from falhv2.anchor_planners.pipeline import plan
+from falhv2.anchor_planners.observation_model import PointCamera
+from falhv2.anchor_planners.anchor_candidates import stations_from_regions
 from test_anchor_common import config
 
 

@@ -6,9 +6,9 @@ import unittest
 
 import numpy as np
 
-sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
-from observation_model import BoxObserver, PointCamera, ray_box_entry
-from observation_model import Open3DRaycaster
+sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
+from falhv2.anchor_planners.observation_model import BoxObserver, PointCamera, ray_box_entry
+from falhv2.anchor_planners.observation_model import Open3DRaycaster
 from test_observation_model import box, camera_config
 
 

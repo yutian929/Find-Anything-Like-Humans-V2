@@ -2,7 +2,7 @@
 from pathlib import Path
 import json
 
-ROOT = Path(__file__).resolve().parent
+ROOT = Path(__file__).resolve().parents[1]
 DATA_DIR = ROOT / 'data'
 OUTPUT_DIR = ROOT / 'outputs'
 
@@ -17,8 +17,8 @@ SAFE_REGIONS_SVG_PATH = OUTPUT_DIR / 'safe_regions.svg'
 ANCHOR_PLAN_PATH = OUTPUT_DIR / 'anchor_plan.json'
 CAMERA_EXPORT_PATH = OUTPUT_DIR / 'camera.d435i.json'
 
-EDITOR_PAGE = ROOT / 'map_editor.html'
-ANCHOR_VIEWER_TEMPLATE = ROOT / 'anchor_selector.html'
+EDITOR_PAGE = ROOT / 'assets' / 'map_editor.html'
+ANCHOR_VIEWER_TEMPLATE = ROOT / 'assets' / 'anchor_selector.html'
 
 # 观察实验默认值。相机 JSON 的 observation_quality 同名字段优先于这里。
 # 得分 = 距离权重 × 画面内未遮挡比例；入镜、像素面积是另外的硬门槛。
@@ -47,4 +47,4 @@ def read_input(path: Path) -> dict:
     try:
         return json.loads(path.read_text(encoding='utf-8'))
     except FileNotFoundError as exc:
-        raise ValueError(f'输入文件不存在：{path}。请检查 config.py 中的路径或用命令行指定输入。') from exc
+        raise ValueError(f'输入文件不存在：{path}。请检查 config/defaults.py 中的路径或用命令行指定输入。') from exc

@@ -9,16 +9,16 @@ import tempfile
 import unittest
 from unittest.mock import patch
 
-sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
-import main as pipeline
-import anchor_verification as verification
-from anchor_candidates import yaw_grid
-from observation_model import PointCamera
-import regions_extractor
-import config as settings
+sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
+from falhv2.anchor_planners import pipeline
+from falhv2.anchor_planners import anchor_verification as verification
+from falhv2.anchor_planners.anchor_candidates import yaw_grid
+from falhv2.anchor_planners.observation_model import PointCamera
+from falhv2.anchor_planners import regions_extractor
+from falhv2.config import defaults as settings
 from test_anchor_common import config as camera_config
-from observation_model import BoxObserver, ObservationSettings
-from observation_region import radial_weight
+from falhv2.anchor_planners.observation_model import BoxObserver, ObservationSettings
+from falhv2.anchor_planners.observation_region import radial_weight
 from test_observation_model import box, camera_config as box_camera_config
 
 
@@ -138,7 +138,7 @@ class ConfigTests(unittest.TestCase):
                     with self.assertRaises(SystemExit) as failure:
                         pipeline.main()
                     self.assertEqual(failure.exception.code, 2)
-                    self.assertIn('config.py', error.getvalue())
+                    self.assertIn('config/defaults.py', error.getvalue())
                 self.assertFalse(values['OUTPUT_DIR'].exists())
                 with patch.object(sys, 'argv', ['main.py', '--scene', str(actual_map)]), contextlib.redirect_stdout(io.StringIO()):
                     self.assertEqual(pipeline.main(), 0)

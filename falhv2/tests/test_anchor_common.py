@@ -8,10 +8,10 @@ import unittest
 
 import numpy as np
 
-sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
-from observation_model import PointCamera, validate_objects
-from anchor_candidates import Station, CandidateResult
-from anchor_selector import select_anchors_greedy as select_anchors
+sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
+from falhv2.anchor_planners.observation_model import PointCamera, validate_objects
+from falhv2.anchor_planners.anchor_candidates import Station, CandidateResult
+from falhv2.anchor_planners.anchor_selector import select_anchors_greedy as select_anchors
 
 
 def exact_minimum_station_count(candidates: CandidateResult, object_ids: list[str]) -> int | None:

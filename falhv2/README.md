@@ -63,7 +63,7 @@ Open3D 使用 Float32；当前地图有少量候选评分差异，且包含启�
 
 ## 环境与运行约定
 
-实验调参入口为 [`config.py`](config.py)，观察门槛与采样默认值保持不变：
+实验调参入口为 [`config/defaults.py`](config/defaults.py)，观察门槛与采样默认值保持不变：
 
 | 配置项 | 默认值 | 用途 |
 |---|---|---|
@@ -80,7 +80,7 @@ Open3D 使用 Float32；当前地图有少量候选评分差异，且包含启�
 | `MAX_AUDIT_RETRIES` | 3 | 复核缺口重选次数；0 时直接尝试基线兜底 |
 | `SAME_COST_REPAIR_TIME_LIMIT_S` | 2.0 | 每次同成本修复的 MILP 秒数上限，受全局剩余预算约束；0 关闭 |
 
-`OBSERVATION_DEFAULTS` 是字典，修改其中的数值即可。相机 JSON 的 `observation_quality` 若显式定义同名字段，则覆盖该字典；目前默认相机 JSON 只定义距离范围，所以上表观察参数均由 `config.py` 生效。CLI 的 `--yaw-step-deg` 和 `--selection-time-limit-s` 覆盖规划默认值。Python `plan()` 未传入或传入 `None` 时采用对应配置值。
+`OBSERVATION_DEFAULTS` 是字典，修改其中的数值即可。相机 JSON 的 `observation_quality` 若显式定义同名字段，则覆盖该字典；目前默认相机 JSON 只定义距离范围，所以上表观察参数均由 `config/defaults.py` 生效。CLI 的 `--yaw-step-deg` 和 `--selection-time-limit-s` 覆盖规划默认值。Python `plan()` 未传入或传入 `None` 时采用对应配置值。
 
 `--observation-workers`、`--observation-executor` 覆盖并行配置；`main.plan()` 对应参数为 `observation_workers`、`observation_executor`。进程方式的 Python API 调用应放在 `if __name__ == '__main__':` 入口保护中；交互式环境可选线程或单 worker。空输入、无站位或单目标自动使用串行，实际执行方式记录在 `statistics.candidate_workers/candidate_executor`。
 
@@ -99,7 +99,7 @@ cd /home/hri/yutian/Find-Anything-Like-Humans-V2
 
 ## 输入与输出管理
 
-所有入口通过 [config.py](config.py) 统一管理默认路径，路径相对 `falhv2` 目录解析，不受启动工作目录影响。
+所有入口通过 [config/defaults.py](config/defaults.py) 统一管理默认路径，路径相对 `falhv2` 目录解析，不受启动工作目录影响。
 
 | 目录 / 文件 | 用途与维护方式 |
 |---|---|
@@ -110,7 +110,7 @@ cd /home/hri/yutian/Find-Anything-Like-Humans-V2
 
 地图编辑器通过浏览器下载 `map.json`，请将它重命名为 `map_aabb.json` 并放到 `data/map_aabb.json`。相机读取脚本生成 `outputs/camera.d435i.json` 草稿，补全人工项后自行复制到 data；复制完成后草稿可删除。规划器始终读取 data 中的正式输入，不会读取草稿或自动选择其他地图。配置缺失时明确报错；也可使用 `--scene`、`--robot`、`--camera` 显式指定其他文件。
 
-地图、机器人和相机 JSON 已集中到 `data/`，内容保持不变。以后更换输入文件，只需修改 `config.py` 中的 `MAP_PATH`、`ROBOT_PATH`、`CAMERA_PATH`；也可临时通过命令行覆盖。旧 outputs 中的地图不参与默认输入选择。
+地图、机器人和相机 JSON 已集中到 `data/`，内容保持不变。以后更换输入文件，只需修改 `config/defaults.py` 中的 `MAP_PATH`、`ROBOT_PATH`、`CAMERA_PATH`；也可临时通过命令行覆盖。旧 outputs 中的地图不参与默认输入选择。
 
 ## 任务与进度
 
@@ -129,46 +129,58 @@ cd /home/hri/yutian/Find-Anything-Like-Humans-V2
 
 ```text
 falhv2/
-├── README.md
-├── map_editor.html                  # 地图编辑器页面
-├── map_editor.py                # 地图编辑器启动入口
-├── regions_extractor.py              # A1：安全格中心与四连通区域
-├── camera_parameters.py         # D435i 相机标定导出
-├── main.py                      # 统一入口：配置、全链路调度与导出调用
-├── anchor_candidates.py         # 安全站位、方向枚举、完整 supports/scores 与热图
-├── anchor_selector.py           # 加权贪心基线、调用优化器与锚点结果组装
-├── anchor_optimizer.py           # 两阶段整数优化与可行解兜底
-├── anchor_verification.py       # 高密度复核、删边重选与原模型复核兜底
-├── anchor_export.py             # JSON、HTML、SVG 与候选支持关系导出
-├── observation_model.py          # 相机投影、实心 AABB 遮挡采样与质量门槛
-├── observation_region.py         # 安装位姿与视场约束的径向范围、距离权重
-├── anchor_selector.html           # 离线交互展示模板
-├── config.py                    # 地图、机器人、相机及输出文件路径
-├── data/
-│   ├── map_aabb.json            # 当前默认地图和物体 AABB
-│   ├── map_point.json           # 保留的旧点地图，需用 --scene 显式选择
-│   ├── robot.json               # 当前机器人尺寸与安全距离
-│   └── camera.d435i.json        # 当前 D435i 的默认 RGB 内参
-├── outputs/                     # 本地产物，Git 忽略
-│   ├── safe_regions.json        # A1 安全区域结果
-│   ├── safe_regions.svg         # A1 安全区域诊断图
-│   ├── anchor_plan.json         # 锚点、拍摄方向与覆盖缺口
-│   ├── anchor_plan.html         # 可直接打开的离线交互页面
-│   ├── anchor_plan.svg          # 静态诊断图
-│   └── anchor_plan.supports.json # 完整候选关系、得分和热图
-└── tests/                       # 编辑器与规划器测试
+├── main.py                      # 薄入口，默认仍跑离线选锚点全流程
+├── __init__.py
+├── anchor_planners/            # 已实现：现有锚点规划算法
+│   ├── pipeline.py              # 全流程调度、CLI 和导出
+│   ├── regions_extractor.py     # 安全区域
+│   ├── anchor_candidates.py     # 观察候选与热图
+│   ├── anchor_selector.py       # 基线与结果组装
+│   ├── anchor_optimizer.py      # 两阶段 MILP
+│   ├── anchor_verification.py   # 复核与修复
+│   ├── anchor_export.py         # 导出
+│   ├── observation_model.py
+│   └── observation_region.py
+├── config/defaults.py           # 路径和实验默认参数
+├── core/types.py                # 新增：建图共享数据契约
+├── robot_adapters/base.py               # 新增：采集与可选导航接口
+├── model_clients/base.py        # 新增：本地/远程统一实例分割接口
+├── map_maintainers/base.py              # 新增：地图融合与快照接口
+├── tools/                      # 已实现：独立输入准备工具
+│   ├── map_editor.py
+│   └── camera_parameters.py
+├── assets/                     # 地图编辑器和锚点展示 HTML
+├── data/                       # 正式地图、机器人尺寸、相机标定输入
+├── outputs/                    # 生成产物，Git 忽略
+├── tests/
+├── requirements.txt
+└── README.md
 ```
 
-`main.plan(scene, robot_config, camera_config, ...)` 是不写文件的 Python 调用入口，返回 `(result, regions, stations, candidates)`。`main.main(argv=None)` 处理 CLI 和输出。安全区域只计算一次，并直接传给候选生成与导出；优化器接收完整合格候选关系及贪心基线，不局限于基线选出的站位。复核仍共享原 MILP 时间预算，输出 schema 和算法规则保持不变。
+2026-10-28 的整理只改变包结构，选点算法、默认输入、输出 schema 和参数保持不变。
+`core`、`robot_adapters`、`model_clients`、`map_maintainers` 目前是接口基础，尚未接入真实机器人。
+完整设计和后续实施顺序见[机器人建图架构](../docs/falhv2/robot_mapping_architecture.md)。
 
-原 `anchor_selector.plan()` 和脚本入口保留转发兼容；新代码应使用 `main.plan()`。原先复核相关的私有函数已迁到 `anchor_verification.py`，候选与观察接口分别位于 `anchor_candidates.py`、`observation_model.py`。
+在仓库根目录运行 `python -B falhv2/main.py` 或 `python -B -m falhv2.main`；
+进入 falhv2 后运行 `python -B main.py` 也保持有效。脚本可从任意工作目录用绝对路径执行。
+Python 调用使用 `from falhv2.main import plan`；它返回
+`(result, regions, stations, candidates)`，不写文件。CLI 调度实现在
+`anchor_planners.pipeline.main(argv=None)`，安全区域只计算一次。
+
+旧的顶层模块路径已迁移，不再保留一排转发脚本。
+原 `anchor_selector.plan()` 兼容函数位于 `falhv2.anchor_planners.anchor_selector`。
+独立命令统一使用包入口（在仓库根目录执行）：
+`python -m falhv2.tools.map_editor`、
+`python -m falhv2.tools.camera_parameters`、
+`python -m falhv2.anchor_planners.regions_extractor`。
+旧 docs 中的历史运行记录不改写，当前命令以本 README 为准。
 
 ## 地图编辑器
 
 启动本地服务：
 
 ```bash
-python falhv2/map_editor.py
+python -m falhv2.tools.map_editor
 ```
 
 浏览器打开 `http://127.0.0.1:8765`，可通过 `--port` 指定其他端口。
@@ -209,7 +221,7 @@ python falhv2/map_editor.py
 运行示例：
 
 ```bash
-python -B falhv2/regions_extractor.py
+python -B -m falhv2.anchor_planners.regions_extractor
 ```
 
 默认读取 `data/map_aabb.json` 和 `data/robot.json`，缺失时报错。需要使用其他地图时通过 `--scene` 显式指定。`outputs/` 和备份目录 `outputs_/` 不纳入版本控制；删除 outputs 不影响正式输入。
@@ -217,7 +229,7 @@ python -B falhv2/regions_extractor.py
 也可显式指定输入和输出：
 
 ```bash
-python -B falhv2/regions_extractor.py \
+python -B -m falhv2.anchor_planners.regions_extractor \
   --scene falhv2/data/map_aabb.json \
   --robot falhv2/data/robot.json \
   --output falhv2/outputs/safe_regions.json \
@@ -251,7 +263,7 @@ A1 不再生成全覆盖扫描路线，区域中的每个安全格中心直接�
 使用 conda `test` 环境中的 RealSense Python SDK `pyrealsense2` 直接读取标定。当前已安装 `2.59.1.11053`；新环境可运行 `python -m pip install pyrealsense2`。在仓库根目录执行：
 
 ```bash
-python -B falhv2/camera_parameters.py
+python -B -m falhv2.tools.camera_parameters
 ```
 
 默认读取 RGB **1280×720、BGR8、30 FPS** 对应的内参，保存到本地 `falhv2/outputs/camera.d435i.json`。脚本查询设备标定，不启动视频采集；后续实际图像应使用相同的分辨率及几何处理。
@@ -276,7 +288,7 @@ python -B falhv2/camera_parameters.py
 支持通过 `--width`、`--height`、`--fps`、`--format` 指定实际拍摄模式，`--serial` 选择设备；列出支持的 RGB 模式：
 
 ```bash
-python -B falhv2/camera_parameters.py --list-modes
+python -B -m falhv2.tools.camera_parameters --list-modes
 ```
 
 在 `falhv2` 目录内运行时省略命令中的 `falhv2/` 即可。深度流可通过 `--stream depth --width 640 --height 480 --output falhv2/outputs/camera.depth.json` 另存；后续 RGB 观察模型使用 RGB 配置。
@@ -356,7 +368,7 @@ python -B falhv2/main.py \
 | `outputs/anchor_plan.svg` | 静态地图、初始加权总分、锚点与拍摄方向 |
 | `outputs/anchor_plan.supports.json` | 默认导出合格关系、连续 `scores` 和 `object_heatmaps`；方向键为 `yaws_rad` 的索引，未列出的项无有效贡献 |
 
-默认输出路径由 `config.py` 管理。使用其他 `--output`（例如 `/tmp/run/plan.json`）时，锚点附件使用相同主干，安全区域另存为 `/tmp/run/plan.safe_regions.json` 和 `plan.safe_regions.svg`，不会写回默认目录。`--no-save-supports` 可跳过候选关系导出；原 `--save-supports` 参数仍可使用。直接双击生成的 HTML 即可离线查看或转发，无需启动服务；`anchor_selector.html` 是模板，查看结果应打开 outputs 中的页面。
+默认输出路径由 `config/defaults.py` 管理。使用其他 `--output`（例如 `/tmp/run/plan.json`）时，锚点附件使用相同主干，安全区域另存为 `/tmp/run/plan.safe_regions.json` 和 `plan.safe_regions.svg`，不会写回默认目录。`--no-save-supports` 可跳过候选关系导出；原 `--save-supports` 参数仍可使用。直接双击生成的 HTML 即可离线查看或转发，无需启动服务；`anchor_selector.html` 是模板，查看结果应打开 outputs 中的页面。
 
 在“观察热力图”中选择具体物体，或直接点击地图物体/右侧物体按钮，显示该物体每个安全站位的最佳合格得分，色标从实际观察得分门槛到 1，默认是 0.5～1。切到“基线：加权贪心”的“物体观察能力叠加”后，拖动轮次条查看已覆盖物体撤票后的分布；总分色标保持初始尺度，便于比较。回放记录的是删冗余之前的贪心过程，不代表导航顺序。单物体图不随回放轮次消失。无色格表示未通过全部条件，不代表未检查。
 

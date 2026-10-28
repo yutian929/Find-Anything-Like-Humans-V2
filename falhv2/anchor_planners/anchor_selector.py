@@ -9,19 +9,11 @@ from collections import Counter, defaultdict
 from copy import deepcopy
 import heapq
 
-try:
-    from .anchor_candidates import (Station, CandidateResult, generate_candidates,
-                                    stations_from_regions, yaw_grid, object_heatmaps)
-    from .observation_model import PointCamera, validate_objects
-    from .anchor_optimizer import optimize
-    from .anchor_export import render_svg, viewer_data, save_supports
-except ImportError:
-    from anchor_candidates import (Station, CandidateResult, generate_candidates,
-                                   stations_from_regions, yaw_grid, object_heatmaps)
-    from observation_model import PointCamera, validate_objects
-    from anchor_optimizer import optimize
-    from anchor_export import render_svg, viewer_data, save_supports
-
+from .anchor_candidates import (Station, CandidateResult, generate_candidates,
+                                stations_from_regions, yaw_grid, object_heatmaps)
+from .observation_model import PointCamera, validate_objects
+from .anchor_optimizer import optimize
+from .anchor_export import render_svg, viewer_data, save_supports
 
 def select_anchors_greedy(candidates: CandidateResult, stations: list[Station], object_ids: list[str]) -> dict:
     targets = set(object_ids)
@@ -163,21 +155,15 @@ def select_anchors(candidates: CandidateResult, stations: list[Station], object_
 
 
 def plan(scene, robot_config, camera_config, *, yaw_step_deg=None, selection_time_limit_s=None):
-    """Compatibility entry point; the pipeline is implemented in main.plan."""
-    if __package__:
-        from .main import plan as run_plan
-    else:
-        from main import plan as run_plan
+    """Compatibility entry point; the pipeline is implemented in pipeline.plan."""
+    from .pipeline import plan as run_plan
     return run_plan(scene, robot_config, camera_config, yaw_step_deg=yaw_step_deg,
                     selection_time_limit_s=selection_time_limit_s)
 
 
 def main():
     """Compatibility CLI; prefer python falhv2/main.py."""
-    if __package__:
-        from .main import main as run
-    else:
-        from main import main as run
+    from .pipeline import main as run
     return run()
 
 

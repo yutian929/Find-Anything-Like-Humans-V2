@@ -9,10 +9,8 @@ from types import SimpleNamespace
 import unittest
 from unittest.mock import MagicMock, patch
 
-sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
-import camera_parameters as camera
-
-
+sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
+from falhv2.tools import camera_parameters as camera
 def profile(stream="color", image_format="bgr8", fps=30, fx=100):
     result = MagicMock()
     result.stream_type.return_value = "stream."+stream

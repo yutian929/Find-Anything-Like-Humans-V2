@@ -13,13 +13,8 @@ from time import perf_counter
 import numpy as np
 from scipy.spatial import cKDTree
 
-try:
-    from . import config as settings
-    from .observation_model import PointCamera, BoxObserver, ObservationSettings, REASONS, validate_objects
-except ImportError:
-    import config as settings
-    from observation_model import PointCamera, BoxObserver, ObservationSettings, REASONS, validate_objects
-
+from ..config import defaults as settings
+from .observation_model import PointCamera, BoxObserver, ObservationSettings, REASONS, validate_objects
 
 @dataclass(frozen=True)
 class Station:

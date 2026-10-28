@@ -4,8 +4,8 @@ import unittest
 from pathlib import Path
 from xml.etree import ElementTree
 
-sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
-from regions_extractor import GridMap, PlanningError, diagnostic_svg, plan
+sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
+from falhv2.anchor_planners.regions_extractor import GridMap, PlanningError, diagnostic_svg, plan
 
 
 def scene(rows, resolution=0.5, origin=(0, 0)):

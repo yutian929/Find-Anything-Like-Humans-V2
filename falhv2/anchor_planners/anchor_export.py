@@ -6,17 +6,10 @@ from pathlib import Path
 
 import numpy as np
 
-try:
-    from . import config as settings
-    from .regions_extractor import diagnostic_svg
-    from .observation_model import PointCamera
-    from .anchor_candidates import object_heatmaps
-except ImportError:
-    import config as settings
-    from regions_extractor import diagnostic_svg
-    from observation_model import PointCamera
-    from anchor_candidates import object_heatmaps
-
+from ..config import defaults as settings
+from .regions_extractor import diagnostic_svg
+from .observation_model import PointCamera
+from .anchor_candidates import object_heatmaps
 
 def render_svg(scene,regions,result,stations,candidates):
     import html, math

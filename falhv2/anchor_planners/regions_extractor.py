@@ -18,13 +18,8 @@ import cv2
 import numpy as np
 from scipy.ndimage import distance_transform_edt
 
-try:
-    from . import config as settings
-    from .config import read_input
-except ImportError:
-    import config as settings
-    from config import read_input
-
+from ..config import defaults as settings
+from ..config.defaults import read_input
 
 Cell = tuple[int, int]  # (row from top, column from left)
 

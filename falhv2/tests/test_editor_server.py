@@ -3,8 +3,8 @@ import sys
 import unittest
 from pathlib import Path
 
-sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
-from map_editor import EditorHandler
+sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
+from falhv2.tools.map_editor import EditorHandler
 
 
 class EditorServerTests(unittest.TestCase):

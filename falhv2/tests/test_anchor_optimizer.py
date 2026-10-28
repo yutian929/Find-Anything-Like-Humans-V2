@@ -8,13 +8,11 @@ from unittest.mock import patch
 
 import numpy as np
 
-sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
-import anchor_optimizer as solver
-import anchor_selector as selector
-import anchor_verification as verification
-import main as pipeline
-
-
+sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
+from falhv2.anchor_planners import anchor_optimizer as solver
+from falhv2.anchor_planners import anchor_selector as selector
+from falhv2.anchor_planners import anchor_verification as verification
+from falhv2.anchor_planners import pipeline
 def instance(supports, scores=None, targets=None):
     stations = [selector.Station(i, 1, (0, j), (j, 0)) for j, i in enumerate(sorted(supports))]
     n = max((y for ds in supports.values() for y in ds), default=0) + 1
@@ -202,7 +200,7 @@ class OptimizerTests(unittest.TestCase):
         selected = selector.select_anchors(c, stations, targets)
         self.assertEqual(selected['selected_cost'], [2, 2])
         selected['optimization']['lexicographic_optimal'] = proven
-        from observation_model import ObservationSettings
+        from falhv2.anchor_planners.observation_model import ObservationSettings
         settings = ObservationSettings()
         def evaluate(index, positions, yaws):
             station = int(positions[0][0])

@@ -10,12 +10,12 @@ import unittest
 from unittest.mock import patch
 
 ROOT = Path(__file__).resolve().parents[1]
-sys.path.insert(0, str(ROOT))
-import main as pipeline
-import config as settings
-import regions_extractor
-import anchor_candidates
-from observation_model import BoxObserver
+sys.path.insert(0, str(ROOT.parent))
+from falhv2.anchor_planners import pipeline
+from falhv2.config import defaults as settings
+from falhv2.anchor_planners import regions_extractor
+from falhv2.anchor_planners import anchor_candidates
+from falhv2.anchor_planners.observation_model import BoxObserver
 from test_observation_model import box, camera_config
 from test_anchor_common import config
 
@@ -64,7 +64,7 @@ class MainTests(unittest.TestCase):
             _, _, inputs = self.inputs(folder)
             variants = [([str(ROOT / 'main.py')], folder),
                         (['-m', 'falhv2.main'], ROOT.parent),
-                        ([str(ROOT / 'anchor_selector.py')], folder)]
+                        (['-m', 'falhv2.anchor_planners.anchor_selector'], ROOT.parent)]
             for index, (command, cwd) in enumerate(variants):
                 with self.subTest(command=command):
                     # An A1-looking plan name must not be overwritten by the A1 export.

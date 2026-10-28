@@ -4,9 +4,9 @@ import sys
 import unittest
 from unittest.mock import patch
 
-sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
-import anchor_candidates as candidates
-import observation_model as model
+sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
+from falhv2.anchor_planners import anchor_candidates as candidates
+from falhv2.anchor_planners import observation_model as model
 from test_observation_model import box, camera_config
 
 

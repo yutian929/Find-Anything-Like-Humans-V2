@@ -7,14 +7,14 @@ import unittest
 
 import numpy as np
 
-sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
-from anchor_candidates import CandidateResult, Station, generate_candidates, object_heatmaps
-from observation_model import PointCamera
-from anchor_selector import select_anchors_greedy as select_anchors
-from anchor_export import viewer_data
-from main import plan
-from observation_model import BoxObserver, ObservationSettings
-from observation_region import camera_poses, radial_envelope, radial_weight
+sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
+from falhv2.anchor_planners.anchor_candidates import CandidateResult, Station, generate_candidates, object_heatmaps
+from falhv2.anchor_planners.observation_model import PointCamera
+from falhv2.anchor_planners.anchor_selector import select_anchors_greedy as select_anchors
+from falhv2.anchor_planners.anchor_export import viewer_data
+from falhv2.anchor_planners.pipeline import plan
+from falhv2.anchor_planners.observation_model import BoxObserver, ObservationSettings
+from falhv2.anchor_planners.observation_region import camera_poses, radial_envelope, radial_weight
 from test_anchor_common import config
 from test_observation_model import box, camera_config
 

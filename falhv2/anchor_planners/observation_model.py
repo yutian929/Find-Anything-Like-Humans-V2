@@ -15,13 +15,8 @@ from typing import Sequence
 import numpy as np
 import shapely
 
-try:
-    from . import config as project_config
-    from .observation_region import camera_poses, radial_envelope, radial_weight
-except ImportError:
-    import config as project_config
-    from observation_region import camera_poses, radial_envelope, radial_weight
-
+from ..config import defaults as project_config
+from .observation_region import camera_poses, radial_envelope, radial_weight
 
 class PointCamera:
     """Pinhole center-point visibility with native zero-distortion intrinsics.

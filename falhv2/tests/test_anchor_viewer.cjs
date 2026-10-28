@@ -1,6 +1,6 @@
 // Exercise the standalone viewer with an in-memory DOM/canvas, no browser needed.
 const assert=require('node:assert/strict'),fs=require('node:fs'),path=require('node:path'),vm=require('node:vm');
-const template=fs.readFileSync(path.join(__dirname,'../anchor_selector.html'),'utf8');
+const template=fs.readFileSync(path.join(__dirname,'../assets/anchor_selector.html'),'utf8');
 assert.ok(!template.includes('id="path"'));
 const script=template.match(/<script>\s*([\s\S]*?)<\/script>/)[1];
 function fixture(){

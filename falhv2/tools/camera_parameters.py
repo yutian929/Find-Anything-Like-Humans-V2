@@ -10,10 +10,7 @@ import json
 import math
 from pathlib import Path
 
-try:
-    from . import config as settings
-except ImportError:
-    import config as settings
+from ..config import defaults as settings
 
 DEFAULT_CONFIG = settings.CAMERA_PATH
 

@@ -6,9 +6,9 @@ from unittest.mock import patch
 
 import numpy as np
 
-sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
-import observation_model as model
-from anchor_candidates import Station, generate_candidates
+sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
+from falhv2.anchor_planners import observation_model as model
+from falhv2.anchor_planners.anchor_candidates import Station, generate_candidates
 from test_observation_model import box, camera_config as base_camera_config
 
 

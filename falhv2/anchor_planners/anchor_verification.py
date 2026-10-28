@@ -7,17 +7,10 @@ from time import perf_counter
 
 import numpy as np
 
-try:
-    from . import config as settings
-    from .observation_model import BoxObserver
-    from .anchor_optimizer import optimize, find_cover_at_cost
-    from .anchor_selector import assemble_anchors
-except ImportError:
-    import config as settings
-    from observation_model import BoxObserver
-    from anchor_optimizer import optimize, find_cover_at_cost
-    from anchor_selector import assemble_anchors
-
+from ..config import defaults as settings
+from .observation_model import BoxObserver
+from .anchor_optimizer import optimize, find_cover_at_cost
+from .anchor_selector import assemble_anchors
 
 def audit_observations(selected, objects, observer):
     """Audit all target/photo pairs; keep dense metrics separate from original q."""
