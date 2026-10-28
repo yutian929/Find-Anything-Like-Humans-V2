@@ -99,6 +99,13 @@ cd /home/hri/yutian/Find-Anything-Like-Humans-V2
 
 ## 输入与输出管理
 
+主程序直接通过 `from falhv2.config import defaults as settings` 加载配置。
+`main(argv)` 解析命令行、按选定路径读取三份 JSON，再调用 `plan(...)`，最后导出结果。
+`plan(...)` 负责安全区域、候选生成、优化和复核；未显式传入的规划参数取自 settings。
+方向间隔、并行参数和求解预算以 CLI 显式参数优先；观察门槛以相机 JSON 中显式
+提供的同名字段优先于 `OBSERVATION_DEFAULTS`。输入输出路径由配置文件位置解析，
+不依赖启动目录。更改配置后需重新运行程序。
+
 所有入口通过 [config/defaults.py](config/defaults.py) 统一管理默认路径，路径相对 `falhv2` 目录解析，不受启动工作目录影响。
 
 | 目录 / 文件 | 用途与维护方式 |
@@ -129,10 +136,9 @@ cd /home/hri/yutian/Find-Anything-Like-Humans-V2
 
 ```text
 falhv2/
-├── main.py                      # 薄入口，默认仍跑离线选锚点全流程
+├── main.py                      # 配置加载、CLI 与离线选锚点全流程编排
 ├── __init__.py
 ├── anchor_planners/            # 已实现：现有锚点规划算法
-│   ├── pipeline.py              # 全流程调度、CLI 和导出
 │   ├── regions_extractor.py     # 安全区域
 │   ├── anchor_candidates.py     # 观察候选与热图
 │   ├── anchor_selector.py       # 基线与结果组装
@@ -164,11 +170,11 @@ falhv2/
 在仓库根目录运行 `python -B falhv2/main.py` 或 `python -B -m falhv2.main`；
 进入 falhv2 后运行 `python -B main.py` 也保持有效。脚本可从任意工作目录用绝对路径执行。
 Python 调用使用 `from falhv2.main import plan`；它返回
-`(result, regions, stations, candidates)`，不写文件。CLI 调度实现在
-`anchor_planners.pipeline.main(argv=None)`，安全区域只计算一次。
+`(result, regions, stations, candidates)`，不写文件。配置加载与 CLI 调度均实现在
+`main.main(argv=None)`，安全区域只计算一次。
 
 旧的顶层模块路径已迁移，不再保留一排转发脚本。
-原 `anchor_selector.plan()` 兼容函数位于 `falhv2.anchor_planners.anchor_selector`。
+`anchor_planners.anchor_selector` 只提供选点算法，不再提供 `plan()`、CLI 或脚本启动入口。完整流程统一使用 `falhv2.main`。
 独立命令统一使用包入口（在仓库根目录执行）：
 `python -m falhv2.tools.map_editor`、
 `python -m falhv2.tools.camera_parameters`、
@@ -411,7 +417,7 @@ node falhv2/tests/test_anchor_viewer.cjs
 
 Python 测试另覆盖两阶段字典序目标、独立动作子集穷举、限时/异常兜底、几何复核、高密度缺口修复及最优性证明的适用范围。原加权贪心测试显式验证旧基线。Python 测试覆盖安全区域、相机几何、俯仰与径向范围解析核对、预筛与独立投影对照、内外边界得分、0.5 合格门槛、加权动态贪心、几何裁切入镜比例、热力图与最终动作得分一致性、覆盖缺口及 CLI 导出。Node.js 测试覆盖编辑器、单物体热图、叠加扣票、轮次回放和最佳朝向展示。新求解器重点测试可运行 `python -B -m unittest discover -s falhv2/tests -p 'test_anchor_optimizer.py' -v`。
 
-统一入口测试另覆盖零参数运行的完整输出、A1 只计算一次、配置路径与输入文件保持、从其他工作目录运行脚本、包入口、旧入口兼容，以及自定义输出文件名不会被安全区域文件覆盖。
+统一入口测试另覆盖零参数运行的完整输出、A1 只计算一次、配置路径与输入文件保持、从其他工作目录运行脚本、包入口，以及自定义输出文件名不会被安全区域文件覆盖。
 
 ## 后续模块维护
 

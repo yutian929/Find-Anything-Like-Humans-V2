@@ -10,7 +10,7 @@ import unittest
 from unittest.mock import patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
-from falhv2.anchor_planners import pipeline
+from falhv2 import main as entrypoint
 from falhv2.anchor_planners import anchor_verification as verification
 from falhv2.anchor_planners.anchor_candidates import yaw_grid
 from falhv2.anchor_planners.observation_model import PointCamera
@@ -82,7 +82,7 @@ class ConfigTests(unittest.TestCase):
                                 SELECTION_TIME_LIMIT_S=5, AUDIT_SAMPLE_GRID=64, MAX_AUDIT_RETRIES=0):
                 for args, step, budget in [([], 90, 5), (['--yaw-step-deg', '45', '--selection-time-limit-s', '10'], 45, 10)]:
                     with patch.object(sys, 'argv', ['main.py', *args]), contextlib.redirect_stdout(io.StringIO()):
-                        self.assertEqual(pipeline.main(), 0)
+                        self.assertEqual(entrypoint.main(), 0)
                     result = settings.read_input(values['ANCHOR_PLAN_PATH'])
                     self.assertEqual(result['configuration']['yaw_step_deg'], step)
                     self.assertEqual(result['statistics']['yaw_count'], 360//step)
@@ -119,7 +119,7 @@ class ConfigTests(unittest.TestCase):
                         self.assertEqual(regions_extractor.main(), 0)
                     (outputs/'map.json').write_text('invalid old output')
                     with patch.object(sys, 'argv', ['main.py']), contextlib.redirect_stdout(io.StringIO()):
-                        self.assertEqual(pipeline.main(), 0)
+                        self.assertEqual(entrypoint.main(), 0)
                     result = settings.read_input(outputs/'anchor_plan.json')
                     self.assertEqual(result['scene_name'], 'persistent input')
                     self.assertEqual(result['covered_object_ids'], ['target'])
@@ -136,12 +136,12 @@ class ConfigTests(unittest.TestCase):
             with patch.multiple(settings, **values):
                 with patch.object(sys, 'argv', ['main.py']), contextlib.redirect_stderr(io.StringIO()) as error:
                     with self.assertRaises(SystemExit) as failure:
-                        pipeline.main()
+                        entrypoint.main()
                     self.assertEqual(failure.exception.code, 2)
                     self.assertIn('config/defaults.py', error.getvalue())
                 self.assertFalse(values['OUTPUT_DIR'].exists())
                 with patch.object(sys, 'argv', ['main.py', '--scene', str(actual_map)]), contextlib.redirect_stdout(io.StringIO()):
-                    self.assertEqual(pipeline.main(), 0)
+                    self.assertEqual(entrypoint.main(), 0)
 
 
 if __name__ == '__main__':

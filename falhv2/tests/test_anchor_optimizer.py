@@ -12,7 +12,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 from falhv2.anchor_planners import anchor_optimizer as solver
 from falhv2.anchor_planners import anchor_selector as selector
 from falhv2.anchor_planners import anchor_verification as verification
-from falhv2.anchor_planners import pipeline
+from falhv2 import main as entrypoint
 def instance(supports, scores=None, targets=None):
     stations = [selector.Station(i, 1, (0, j), (j, 0)) for j, i in enumerate(sorted(supports))]
     n = max((y for ds in supports.values() for y in ds), default=0) + 1
@@ -184,7 +184,7 @@ class OptimizerTests(unittest.TestCase):
         from test_anchor_common import config
         robot = {'robot': {'footprint_width_m': .2, 'footprint_length_m': .2, 'safety_margin_m': 0}}
         with patch.object(verification, 'verify_observations', side_effect=[None, ValueError('geometry mismatch')]):
-            r, *_ = pipeline.plan(scene, robot, config())
+            r, *_ = entrypoint.plan(scene, robot, config())
         self.assertEqual(r['selected_cost'], r['baseline_cost'])
         self.assertEqual(r['anchors'], r['baseline']['anchors'])
         self.assertFalse(r['optimization']['lexicographic_optimal'])

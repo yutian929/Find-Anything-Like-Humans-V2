@@ -12,7 +12,7 @@ from falhv2.anchor_planners.anchor_candidates import CandidateResult, Station, g
 from falhv2.anchor_planners.observation_model import PointCamera
 from falhv2.anchor_planners.anchor_selector import select_anchors_greedy as select_anchors
 from falhv2.anchor_planners.anchor_export import viewer_data
-from falhv2.anchor_planners.pipeline import plan
+from falhv2.main import plan
 from falhv2.anchor_planners.observation_model import BoxObserver, ObservationSettings
 from falhv2.anchor_planners.observation_region import camera_poses, radial_envelope, radial_weight
 from test_anchor_common import config

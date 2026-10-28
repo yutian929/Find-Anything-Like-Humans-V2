@@ -13,7 +13,7 @@
 
 ## 模块职责与依赖
 
-- anchor_planners：现有算法和离线 pipeline，依赖配置与数值计算库。
+- anchor_planners：现有规划算法；main.py 负责配置加载、CLI 和全流程编排。
 - robot_adapters：将 ROS、厂商 SDK、录制数据转换成统一数据；运动控制另设 Navigator。
 - model_clients：本地与远程实例分割，业务层只面向 InstanceSegmenter。
 - map_maintainers：深度反投影、多帧关联、实例融合、生命周期、快照与规划导出。
@@ -31,7 +31,7 @@ RobotSource ── RGBDFrame ── InstanceSegmenter（local / remote）
                                           │ MapSnapshot
                                  校验 / 冻结 / 原子发布
                                           │ grid + objects JSON
-                                  anchor_planners.pipeline
+                                  main.plan
 ```
 
 已新增的 base.py 都是 Protocol，不能当作可运行的驱动或建图器。

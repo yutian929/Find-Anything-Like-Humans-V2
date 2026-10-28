@@ -1,4 +1,4 @@
-"""The unified entry point exports every stage and preserves legacy entry points."""
+"""The unified entry point exports every stage through script and package entry points."""
 import contextlib
 import io
 import json
@@ -11,7 +11,7 @@ from unittest.mock import patch
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT.parent))
-from falhv2.anchor_planners import pipeline
+from falhv2 import main as entrypoint
 from falhv2.config import defaults as settings
 from falhv2.anchor_planners import regions_extractor
 from falhv2.anchor_planners import anchor_candidates
@@ -44,9 +44,9 @@ class MainTests(unittest.TestCase):
             with patch.multiple(settings, MAP_PATH=inputs['scene'], ROBOT_PATH=inputs['robot'],
                                 CAMERA_PATH=inputs['camera'], ANCHOR_PLAN_PATH=output,
                                 SAFE_REGIONS_PATH=regions, SAFE_REGIONS_SVG_PATH=svg), \
-                    patch.object(pipeline, 'find_safe_regions', wraps=regions_extractor.plan) as extract, \
+                    patch.object(entrypoint, 'find_safe_regions', wraps=regions_extractor.plan) as extract, \
                     contextlib.redirect_stdout(io.StringIO()):
-                self.assertEqual(pipeline.main([]), 0)
+                self.assertEqual(entrypoint.main([]), 0)
             extract.assert_called_once_with(scene, robot)
             for path in [output, output.with_suffix('.html'), output.with_suffix('.svg'),
                          output.with_suffix('.supports.json'), regions, svg]:
@@ -58,13 +58,12 @@ class MainTests(unittest.TestCase):
             self.assertEqual(result['optimization']['geometry_verification'], 'passed')
             self.assertEqual(before, {p: p.read_bytes() for p in inputs.values()})
 
-    def test_script_package_and_legacy_cli_work_with_custom_output(self):
+    def test_script_and_package_cli_work_with_custom_output(self):
         with tempfile.TemporaryDirectory() as directory:
             folder = Path(directory)
             _, _, inputs = self.inputs(folder)
             variants = [([str(ROOT / 'main.py')], folder),
-                        (['-m', 'falhv2.main'], ROOT.parent),
-                        (['-m', 'falhv2.anchor_planners.anchor_selector'], ROOT.parent)]
+                        (['-m', 'falhv2.main'], ROOT.parent)]
             for index, (command, cwd) in enumerate(variants):
                 with self.subTest(command=command):
                     # An A1-looking plan name must not be overwritten by the A1 export.
@@ -89,9 +88,9 @@ class MainTests(unittest.TestCase):
         def candidates(*args, **kwargs):
             self.assertEqual(kwargs.pop('ray_backend'), 'open3d')
             return anchor_candidates.generate_candidates(*args, **kwargs)
-        with patch.object(pipeline, 'generate_candidates', side_effect=candidates), \
-                patch.object(pipeline, 'BoxObserver', wraps=BoxObserver) as verifier:
-            result, *_ = pipeline.plan(scene, robot, camera_config(), ray_backend='open3d')
+        with patch.object(entrypoint, 'generate_candidates', side_effect=candidates), \
+                patch.object(entrypoint, 'BoxObserver', wraps=BoxObserver) as verifier:
+            result, *_ = entrypoint.plan(scene, robot, camera_config(), ray_backend='open3d')
         self.assertEqual(verifier.call_args.kwargs['ray_backend'], 'numpy')
         self.assertEqual(result['configuration']['candidate_ray_backend'], 'open3d')
         self.assertEqual(result['configuration']['verification_ray_backend'], 'numpy')

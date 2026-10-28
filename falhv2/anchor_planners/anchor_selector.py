@@ -1,7 +1,7 @@
 """Select anchors from qualified candidates; retain the weighted greedy baseline.
 
 Geometry, pipeline orchestration, verification and exports live in separate modules.
-The former public imports and script entry point remain available for compatibility.
+Run the complete pipeline through falhv2.main; this module only selects anchors.
 """
 from __future__ import annotations
 
@@ -152,20 +152,3 @@ def select_anchors(candidates: CandidateResult, stations: list[Station], object_
                     optimality=('finite_pool_lexicographic_optimal'
                         if solution['optimization']['lexicographic_optimal'] else 'not_proven'))
     return selected
-
-
-def plan(scene, robot_config, camera_config, *, yaw_step_deg=None, selection_time_limit_s=None):
-    """Compatibility entry point; the pipeline is implemented in pipeline.plan."""
-    from .pipeline import plan as run_plan
-    return run_plan(scene, robot_config, camera_config, yaw_step_deg=yaw_step_deg,
-                    selection_time_limit_s=selection_time_limit_s)
-
-
-def main():
-    """Compatibility CLI; prefer python falhv2/main.py."""
-    from .pipeline import main as run
-    return run()
-
-
-if __name__ == '__main__':
-    raise SystemExit(main())
