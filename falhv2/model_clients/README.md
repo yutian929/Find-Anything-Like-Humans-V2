@@ -106,3 +106,19 @@ python -B -m unittest falhv2.tests.test_cubify_clients -v
 覆盖 RGB/深度转换、位姿与重力、地图 AABB、损坏/错帧响应、真实 localhost HTTP 传输和异常。
 HTTP 单测用可控假模型，不要求权重。Lenovo 的真实权重另已用合成 RGB-D 完成 GPU 推理及真实 HTTP 链路冒烟检查（641x479 非整倍数图像，本地/远程输出一致）；
 这不代表已验证真实相机上的检测精度。默认规划入口不使用这些模型配置。
+
+## 当前相机帧可视化
+
+在仓库根目录运行（Lenovo 的 depth 环境已有所需 cv2 / plotly）：
+```bash
+conda run -n depth python -m falhv2.tools.cubify_preview
+```
+工具先加载模型，再读取一帧实时同步 RGB-D，生成原图与 3D 框投影对照 PNG、
+可旋转的实测点云与预测框 HTML，以及预测 JSON 和原始 RGB-D NPZ。
+结果保存在 falhv2/outputs/cubify_时间戳.*；HTML 内嵌 Plotly，可离线打开。
+编号按置信度降序排列，默认阈值 0.25，最多显示 20 个框；JSON 保留全部过阈值预测。
+可用 --threshold、--max-boxes 调整；--server-url 可改用已部署的模型服务。
+该预览使用相机坐标，不进行地图融合或给物体分配跨帧 ID。
+
+需要同步 RGB-D 发布器和底盘网络均正常；底盘定位超时会让发布器停止发布有效帧，
+工具会明确报错，不使用旧帧、合成帧或猜测位姿生成效果图。
