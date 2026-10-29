@@ -1,7 +1,7 @@
 # 真实地图构建与维护（接口阶段）
 
-当前只有 MapBuilder 协议，尚未实现 SLAM 接入、实例融合或地图写入。
-共享输入输出结构位于 core/types.py。详细设计见
+除 MapBuilder 协议外，已提供 `cubify.cuboids_to_map_aabbs`：将 CuTR 的光学坐标角点转换为地图 AABBObservation，携带帧与地图版本。尚未实现 SLAM 接入、多帧实例融合或地图写入，单帧 detection_index 不是稳定物体 ID。
+采集、模型结果和地图结构分别定义在 robot_adapters/base.py、model_clients/base.py 和 map_maintainers/base.py。详细设计见
 [机器人建图架构](../../docs/falhv2/robot_mapping_architecture.md)。
 
 后续按实际功能逐步增加：

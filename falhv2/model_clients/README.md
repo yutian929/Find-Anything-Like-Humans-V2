@@ -1,17 +1,108 @@
-# 模型客户端边界
+# 模型客户端
 
-此目录对应旧 `anchor-map/model_clients` 的职责；当前只定义
-`base.InstanceSegmenter` 协议，尚未迁移模型或实现远程服务。
+已接入 [Cubify Anything](https://github.com/apple-aiml-research/ml-cubifyanything) 的 **CuTR RGB-D** 模型。
+本地和 HTTP 客户端统一实现 `base.CuboidDetector`；`InstanceSegmenter` 保留为独立的 mask 接口。
+默认 `python falhv2/main.py` 仍执行原有离线锚点选择流程，不导入 torch、不连接相机、不加载模型。
 
-后续每个模型可在独立模块中提供 Local / Remote 两个实现，用配置选择
-backend、mode、device/weights 或 endpoint/timeout。模式非法应明确报错，
-不要静默回退到本地或触发下载。离线锚点规划不加载这些依赖。
+每个模型使用一个 Python 文件，与旧 `anchor-map/model_clients` 的组织方式一致：
+`cubify_anything.py` 包含 Local / Remote 客户端及该模型专用的协议、几何处理；
+`base.py` 定义统一接口，`__init__.py` 提供构造入口。HTTP 服务启动器仍在 `tools/cubify_server.py`。
 
-两种实现都输出原图坐标系下的无类别实例 mask、confidence、frame_id 和模型版本。
-图像缩放、padding、mask 编解码及 HTTP 协议适配由客户端承担；3D 反投影、
-多帧关联与 AABB 融合由 map_maintainers 承担。远程调用须验证请求和响应帧 ID、
-mask 尺寸、值域、模型版本以及超时；失败不等同于没有物体。
+## 本地调用
 
-旧客户端不能直接复制：SAM2 需要提示框，旧 SAM3 接口需要文本提示且只返回
-bbox，均不等同于无类别自动实例发现；旧 SAM3 还依赖旧项目的全局 config/perception。
-接入时应选择支持所需能力的实现并显式适配，保留旧 anchor-map 功能独立运行。
+在仓库根目录、具备 CuTR 依赖的 Python 环境中：
+
+```python
+from falhv2.model_clients import build_cubify_anything
+from falhv2.robot_adapters.anchor_map import from_anchor_map_frame
+from falhv2.map_maintainers.cubify import cuboids_to_map_aabbs
+
+client = build_cubify_anything({
+    "mode": "local",
+    "path": "/home/hri/models_weights/cubifyanything/cutr_rgbd.pth",
+    "source_path": "/home/hri/map_test_new_v8_clean",
+    "device": "cuda",       # 也支持 cpu / auto
+    "score_threshold": 0.25,
+    "max_side": 1024,
+})
+try:
+    # legacy_frame 是 anchor-map/frame_source.py 的 Frame。
+    # map_id / map_revision 必须由 SLAM 会话提供，不可用常量掩盖回环修正。
+    frame = from_anchor_map_frame(
+        legacy_frame, map_id=current_map_id, map_revision=current_map_revision)
+    result = client.detect(frame)
+    observations = cuboids_to_map_aabbs(frame, result)
+finally:
+    client.close()
+```
+
+Lenovo 已找到上述权重（396866874 字节）和源码；`depth` conda 环境已验证可加载并运行。
+该源码目录是已有项目保留的 Cubify 包（含优化修改），并非本次下载；
+客户端只引用其中的 `cubifyanything` 包，不引用旧项目业务代码。
+也可将 `source_path` 指向其他完整上游源码根目录；若已安装该包，可省略。
+路径不存在、RGB-only 权重、缺失依赖或非法配置会直接报错，不自动下载或静默切换 backend。
+模型版本记录为权重文件的 SHA-256；部署时还应固定所用源码版本。
+
+只使用远程客户端或运行轻量接口测试：
+```bash
+python -m pip install -r falhv2/model_clients/requirements.txt
+```
+本地推理还需要匹配设备的 PyTorch / torchvision、timm 及所用 CuTR 源码的依赖。
+已有 Lenovo `depth` 环境可直接使用；不要为离线锚点规划强制安装 GPU 依赖。
+
+## 远程调用
+
+在模型所在机器的仓库根目录启动（默认仅监听本机）：
+```bash
+conda run -n depth python -m falhv2.tools.cubify_server \
+  --weights /home/hri/models_weights/cubifyanything/cutr_rgbd.pth \
+  --source-path /home/hri/map_test_new_v8_clean \
+  --device cuda --port 8093
+```
+跨机器部署时按实际网络设置 `--host`，或使用 SSH 转发；此启动器供受信任网络中的开发调试使用，
+没有实现公网认证。停止服务会释放客户端，不保留后台进程。
+
+机器人侧仅更换配置，`detect(frame)` 与结果类型不变：
+```python
+client = build_cubify_anything({
+    "mode": "remote",
+    "server_url": "http://127.0.0.1:8093",
+    "timeout_s": 60,
+    "score_threshold": 0.25,
+})
+```
+
+协议 v1：`GET /healthz`、`POST /v1/cubify/detect`。
+JSON 请求包含 RGB PNG、base64 little-endian float32 米制深度、内参、采集时刻位姿、帧与地图版本。
+响应包含 frame_id、timestamp_ns、camera_frame、model_id、model_version、scores 与 Nx8x3 corners_camera_m。
+客户端核对帧标识、相机坐标系、时间戳、模型标识、置信度和角点有效性，拒绝错帧响应。
+超时、服务不可用、推理异常均抛错；成功空结果仅表示该帧没有达到阈值的预测。
+HTTP 超时不会取消服务端已开始的 GPU 推理；本地调用是同步的。
+
+## 数据与几何约定
+
+- 输入 RGB 是 HxWx3 uint8 **RGB**，深度是对齐、去畸变后的 optical-Z 米制浮点数。
+  legacy 适配器处理 BGR→RGB、z16×depth_scale；不负责对齐/去畸变。
+  无效深度置零，全帧无有效深度报错。
+- 相机光学坐标：右、下、前；地图 +Z 必须与物理向上方向一致。
+  使用采集时刻的 T_map_camera 提取重力倾斜，移除地图 yaw 的影响。
+  当前要求图像正立；侧置、倒置或垂直朝上/下的相机须先校正图像、标定与位姿，否则明确报错。
+- 客户端缩放 RGB 到 max_side 内、尺寸对齐到 4；深度使用四分之一分辨率。
+  内参按真实横纵缩放比例更新。归一化交给上游 Preprocessor。
+- 输出是**无类别有向 3D cuboid** 的八个角点，单位米、原相机光学坐标系，
+  尚不是地图 AABB。不得对上游已应用重力旋转的输出再旋转一次。
+- `cuboids_to_map_aabbs` 先把所有角点变换到 map，再逐轴取 min/max；
+  不能先取相机系 AABB 后只变换两个极值点。
+- AABBObservation 仅是单帧观测，没有跨帧稳定物体 ID。
+  关联、融合、去重、回环重投影、栅格地图维护与规划器导出尚未实现。
+- legacy Frame 的 stamp 是 UNIX 秒浮点数；转换回纳秒不能恢复其已丢失的精度。
+
+## 验证
+
+```bash
+python -B -m unittest falhv2.tests.test_cubify_clients -v
+```
+
+覆盖 RGB/深度转换、位姿与重力、地图 AABB、损坏/错帧响应、真实 localhost HTTP 传输和异常。
+HTTP 单测用可控假模型，不要求权重。Lenovo 的真实权重另已用合成 RGB-D 完成 GPU 推理及真实 HTTP 链路冒烟检查（641x479 非整倍数图像，本地/远程输出一致）；
+这不代表已验证真实相机上的检测精度。默认规划入口不使用这些模型配置。

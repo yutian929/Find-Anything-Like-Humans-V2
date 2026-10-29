@@ -1,0 +1,5 @@
+# Optional RGB-D clients, HTTP server and interface tests; no GPU runtime.
+numpy>=1.24
+Pillow>=10
+requests>=2.31
+Flask>=3

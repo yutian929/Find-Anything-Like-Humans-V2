@@ -17,7 +17,7 @@
 - robot_adapters：将 ROS、厂商 SDK、录制数据转换成统一数据；运动控制另设 Navigator。
 - model_clients：本地与远程实例分割，业务层只面向 InstanceSegmenter。
 - map_maintainers：深度反投影、多帧关联、实例融合、生命周期、快照与规划导出。
-- core/types：跨模块数据契约，不加载 ROS、相机 SDK、torch 或网络客户端。
+- 数据结构归入所属模块的 base.py：robot_adapters 定义采集数据，model_clients 定义推理结果，map_maintainers 定义地图快照；导入这些接口不加载 ROS、相机 SDK、torch 或网络客户端。
 - config：规划默认参数；后续 robot/model/map_maintainers 配置应分开。
 - tools / assets：人工地图编辑、相机标定工具及页面。
 

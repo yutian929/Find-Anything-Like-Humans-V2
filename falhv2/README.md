@@ -148,9 +148,8 @@ falhv2/
 │   ├── observation_model.py
 │   └── observation_region.py
 ├── config/defaults.py           # 路径和实验默认参数
-├── core/types.py                # 新增：建图共享数据契约
 ├── robot_adapters/base.py               # 新增：采集与可选导航接口
-├── model_clients/base.py        # 新增：本地/远程统一实例分割接口
+├── model_clients/               # CuTR RGB-D 本地/远程客户端与模型协议
 ├── map_maintainers/base.py              # 新增：地图融合与快照接口
 ├── tools/                      # 已实现：独立输入准备工具
 │   ├── map_editor.py
@@ -164,7 +163,7 @@ falhv2/
 ```
 
 2026-10-28 的整理只改变包结构，选点算法、默认输入、输出 schema 和参数保持不变。
-`core`、`robot_adapters`、`model_clients`、`map_maintainers` 目前是接口基础，尚未接入真实机器人。
+`model_clients` 已接入 Cubify Anything RGB-D 的本地/远程调用；`robot_adapters` 已实现同步 RGB-D 获取、栅格地图读取和底盘定位（见 [调用示例](robot_adapters/README.md)），`map_maintainers` 提供单帧地图 AABB 转换。尚未实现多帧融合和机器人建图主流程。使用方法见 [模型客户端](model_clients/README.md)。默认 main.py 仍运行离线锚点选择。
 完整设计和后续实施顺序见[机器人建图架构](../docs/falhv2/robot_mapping_architecture.md)。
 
 在仓库根目录运行 `python -B falhv2/main.py` 或 `python -B -m falhv2.main`；
@@ -422,3 +421,7 @@ Python 测试另覆盖两阶段字典序目标、独立动作子集穷举、限�
 ## 后续模块维护
 
 后续子任务沿用 `test` 环境。实现新模块时，在本 README 补充其运行命令、输入输出与依赖要求，并同步更新任务状态。详细研究设计和验收记录维护在上方链接的研究文档中。
+
+模型客户端接口测试需额外安装 `falhv2/model_clients/requirements.txt`，无需 torch 或权重。
+
+机器人适配器测试需安装 `pyzmq`、`msgpack`、`requests`，测试使用本地模拟发布器和 HTTP 服务，无需连接真实机器人。
