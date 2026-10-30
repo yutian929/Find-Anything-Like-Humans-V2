@@ -8,6 +8,19 @@
 `cubify_anything.py` 包含 Local / Remote 客户端及该模型专用的协议、几何处理；
 `base.py` 定义统一接口，`__init__.py` 提供构造入口。HTTP 服务启动器仍在 `tools/cubify_server.py`。
 
+## 配置
+
+默认使用 `falhv2/config/defaults.py` 中的一个 `CUBIFY` 字典，结构与旧项目的 RYNNBRAIN / SAM2 / SAM3 相同。
+本地模式读取 path、source_path、device、max_side、score_threshold；远程模式读取 url（含端口）、timeout、score_threshold。
+切换远程只需修改该字典中的 mode 和 url，本地字段可以保留；远程推理的权重、设备和输入尺寸以服务端机器的配置为准。
+只有 main.py 加载配置，再调用 `build_cubify_anything(model_config)`。客户端不 import 配置，也不自行选择配置文件。
+预览和服务启动器接收 main.py 传入的该字典；服务使用其中的本地参数，并默认使用 url 中的端口，始终本地加载模型。
+服务绑定地址仍由 --host 控制（默认 127.0.0.1），跨机访问可用 --host 0.0.0.0；--port 可临时覆盖监听端口。
+显示框数、点云采样等保留在工具内部，不另设配置块。默认 main.py 仍运行离线锚点选择。
+
+可通过 `python falhv2/main.py --config /path/to/robot.py --task cubify-preview` 选择另一份 Python 配置。
+配置文件可以只定义一个 CUBIFY 字典：未指定的字段沿用默认值，命令行参数再覆盖本次调用。
+
 ## 本地调用
 
 在仓库根目录、具备 CuTR 依赖的 Python 环境中：
@@ -17,14 +30,7 @@ from falhv2.model_clients import build_cubify_anything
 from falhv2.robot_adapters.anchor_map import from_anchor_map_frame
 from falhv2.map_maintainers.cubify import cuboids_to_map_aabbs
 
-client = build_cubify_anything({
-    "mode": "local",
-    "path": "/home/hri/models_weights/cubifyanything/cutr_rgbd.pth",
-    "source_path": "/home/hri/map_test_new_v8_clean",
-    "device": "cuda",       # 也支持 cpu / auto
-    "score_threshold": 0.25,
-    "max_side": 1024,
-})
+client = build_cubify_anything(model_config)  # model_config 由 main.py 传入
 try:
     # legacy_frame 是 anchor-map/frame_source.py 的 Frame。
     # map_id / map_revision 必须由 SLAM 会话提供，不可用常量掩盖回环修正。
@@ -54,7 +60,7 @@ python -m pip install -r falhv2/model_clients/requirements.txt
 
 在模型所在机器的仓库根目录启动（默认仅监听本机）：
 ```bash
-conda run -n depth python -m falhv2.tools.cubify_server \
+conda run -n depth python falhv2/main.py --task cubify-server \
   --weights /home/hri/models_weights/cubifyanything/cutr_rgbd.pth \
   --source-path /home/hri/map_test_new_v8_clean \
   --device cuda --port 8093
@@ -66,8 +72,8 @@ conda run -n depth python -m falhv2.tools.cubify_server \
 ```python
 client = build_cubify_anything({
     "mode": "remote",
-    "server_url": "http://127.0.0.1:8093",
-    "timeout_s": 60,
+    "url": "http://127.0.0.1:8093",
+    "timeout": 60,
     "score_threshold": 0.25,
 })
 ```
@@ -111,7 +117,7 @@ HTTP 单测用可控假模型，不要求权重。Lenovo 的真实权重另已�
 
 在仓库根目录运行（Lenovo 的 depth 环境已有所需 cv2 / plotly）：
 ```bash
-conda run -n depth python -m falhv2.tools.cubify_preview
+conda run -n depth python falhv2/main.py --task cubify-preview
 ```
 工具先加载模型，再读取一帧实时同步 RGB-D，生成原图与 3D 框投影对照 PNG、
 可旋转的实测点云与预测框 HTML，以及预测 JSON 和原始 RGB-D NPZ。

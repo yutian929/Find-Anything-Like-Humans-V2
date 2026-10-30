@@ -15,7 +15,6 @@ from typing import Sequence
 import numpy as np
 import shapely
 
-from ..config import defaults as project_config
 from .observation_region import camera_poses, radial_envelope, radial_weight
 
 class PointCamera:
@@ -85,13 +84,13 @@ class PointCamera:
 
 @dataclass(frozen=True)
 class ObservationSettings:
-    min_in_frame_fraction: float = field(default_factory=lambda: project_config.OBSERVATION_DEFAULTS['min_in_frame_fraction'])
-    min_observation_score: float = field(default_factory=lambda: project_config.OBSERVATION_DEFAULTS['min_observation_score'])
-    min_visible_pixels: float = field(default_factory=lambda: project_config.OBSERVATION_DEFAULTS['min_visible_pixels'])
-    sample_grid: int = field(default_factory=lambda: project_config.OBSERVATION_DEFAULTS['sample_grid'])
-    refinement_grid: int = field(default_factory=lambda: project_config.OBSERVATION_DEFAULTS['refinement_grid'])
-    radial_inner_weight: float = field(default_factory=lambda: project_config.OBSERVATION_DEFAULTS['radial_inner_weight'])
-    radial_outer_weight: float = field(default_factory=lambda: project_config.OBSERVATION_DEFAULTS['radial_outer_weight'])
+    min_in_frame_fraction: float = .8
+    min_observation_score: float = .5
+    min_visible_pixels: float = 400.0
+    sample_grid: int = 12
+    refinement_grid: int = 36
+    radial_inner_weight: float = 1.0
+    radial_outer_weight: float = .5
 
     @classmethod
     def from_config(cls, config):

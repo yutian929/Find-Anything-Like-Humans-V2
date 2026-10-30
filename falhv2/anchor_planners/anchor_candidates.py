@@ -13,7 +13,6 @@ from time import perf_counter
 import numpy as np
 from scipy.spatial import cKDTree
 
-from ..config import defaults as settings
 from .observation_model import PointCamera, BoxObserver, ObservationSettings, REASONS, validate_objects
 
 @dataclass(frozen=True)
@@ -35,7 +34,7 @@ class CandidateResult:
 
 
 def yaw_grid(step_deg: float | None = None) -> list[float]:
-    step_deg = settings.YAW_STEP_DEG if step_deg is None else step_deg
+    step_deg = 30.0 if step_deg is None else step_deg
     if isinstance(step_deg, bool) or not isinstance(step_deg, (int, float)) or not math.isfinite(step_deg) or not 0 < step_deg <= 360:
         raise ValueError("yaw step must be in (0, 360] degrees")
     return np.deg2rad(np.arange(0.0, 360.0, step_deg)).tolist()
@@ -249,7 +248,7 @@ def generate_candidates(stations: list[Station], objects: list[dict], camera: Po
     objects = validate_objects(objects)
     # Resolve parent configuration before spawn: workers must not reread defaults
     # that may have been changed by an API caller in this process.
-    step = settings.YAW_STEP_DEG if yaw_step_deg is None else yaw_step_deg
+    step = 30.0 if yaw_step_deg is None else yaw_step_deg
     kwargs = dict(yaw_step_deg=step, station_indices=station_indices, ray_backend=ray_backend)
     if workers == 1 or len(objects) < 2 or not stations or (station_indices is not None and len(station_indices) == 0):
         result = _generate_candidates_serial(stations, objects, camera, **kwargs)

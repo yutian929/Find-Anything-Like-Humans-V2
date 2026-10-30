@@ -43,11 +43,10 @@ class ParallelCandidateTests(unittest.TestCase):
         config['observation_quality'].pop('min_visible_pixels', None)
         config['observation_quality'].pop('sample_grid', None)
         config['observation_quality'].pop('refinement_grid', None)
+        config['observation_quality'].update(min_visible_pixels=1e8, sample_grid=8, refinement_grid=16)
         camera = model.PointCamera(config)
-        with patch.dict(model.project_config.OBSERVATION_DEFAULTS,
-                        min_visible_pixels=1e8, sample_grid=8, refinement_grid=16):
-            serial = candidates.generate_candidates(self.stations, self.objects, camera)
-            parallel = candidates.generate_candidates(self.stations, self.objects, camera, workers=2)
+        serial = candidates.generate_candidates(self.stations, self.objects, camera)
+        parallel = candidates.generate_candidates(self.stations, self.objects, camera, workers=2)
         self.assertEqual(serial.supports, {})
         self.assertGreater(serial.stats['diagnostic_recomputed_pose_pairs'], 0)
         self.compare(serial, parallel)

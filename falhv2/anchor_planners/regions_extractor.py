@@ -18,8 +18,6 @@ import cv2
 import numpy as np
 from scipy.ndimage import distance_transform_edt
 
-from ..config import defaults as settings
-from ..config.defaults import read_input
 
 Cell = tuple[int, int]  # (row from top, column from left)
 
@@ -233,16 +231,16 @@ def diagnostic_svg(scene: dict[str, Any], result: dict[str, Any]) -> str:
     return "\n".join(parts)
 
 
-def main() -> int:
+def main(argv=None, *, scene_path=None, robot_path=None, output_path=None, svg_path=None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument('--scene', type=Path, default=settings.MAP_PATH)
-    parser.add_argument('--robot', type=Path, default=settings.ROBOT_PATH)
-    parser.add_argument("--output", type=Path, default=settings.SAFE_REGIONS_PATH)
-    parser.add_argument("--svg", type=Path, default=settings.SAFE_REGIONS_SVG_PATH)
-    args = parser.parse_args()
+    parser.add_argument('--scene', type=Path, default=scene_path, required=scene_path is None)
+    parser.add_argument('--robot', type=Path, default=robot_path, required=robot_path is None)
+    parser.add_argument("--output", type=Path, default=output_path, required=output_path is None)
+    parser.add_argument("--svg", type=Path, default=svg_path, required=svg_path is None)
+    args = parser.parse_args(argv)
     try:
-        scene = read_input(args.scene)
-        config = read_input(args.robot)
+        scene = json.loads(args.scene.read_text(encoding='utf-8'))
+        config = json.loads(args.robot.read_text(encoding='utf-8'))
         result = plan(scene, config)
     except (OSError, ValueError) as exc:
         code = exc.code if isinstance(exc, PlanningError) else "invalid_input"

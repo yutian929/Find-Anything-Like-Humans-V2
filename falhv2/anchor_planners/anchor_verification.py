@@ -7,7 +7,6 @@ from time import perf_counter
 
 import numpy as np
 
-from ..config import defaults as settings
 from .observation_model import BoxObserver
 from .anchor_optimizer import optimize, find_cover_at_cost
 from .anchor_selector import assemble_anchors
@@ -35,9 +34,8 @@ def audit_observations(selected, objects, observer):
                 rejected_supports=rejected)
 
 
-def audit_parameters():
-    grid, retries = settings.AUDIT_SAMPLE_GRID, settings.MAX_AUDIT_RETRIES
-    same_cost_limit = settings.SAME_COST_REPAIR_TIME_LIMIT_S
+def audit_parameters(sample_grid=96, max_retries=3, same_cost_time_limit_s=2.0):
+    grid, retries, same_cost_limit = sample_grid, max_retries, same_cost_time_limit_s
     if isinstance(grid, bool) or not isinstance(grid, int) or not 4 <= grid <= 128:
         raise ValueError('AUDIT_SAMPLE_GRID must be an integer in [4, 128]')
     if isinstance(retries, bool) or not isinstance(retries, int) or retries < 0:
@@ -48,13 +46,13 @@ def audit_parameters():
     return dict(sample_grid=grid, max_retries=retries, same_cost_time_limit_s=same_cost_limit)
 
 
-def dense_observer(observer, objects):
-    grid = max(audit_parameters()['sample_grid'], observer.settings.refinement_grid)
+def dense_observer(observer, objects, *, sample_grid=96):
+    grid = max(audit_parameters(sample_grid=sample_grid)['sample_grid'], observer.settings.refinement_grid)
     return BoxObserver(observer.camera, objects, replace(observer.settings,
         sample_grid=grid, refinement_grid=grid))
 
 
-def refine_after_audit(selected, candidates, stations, objects, observer, time_limit_s=None):
+def refine_after_audit(selected, candidates, stations, objects, observer, time_limit_s=None, *, parameters=None):
     """Repair sampled false positives without changing the exported candidate q.
 
     Only reject relations disproved by a denser final-action audit. A repaired
@@ -62,8 +60,8 @@ def refine_after_audit(selected, candidates, stations, objects, observer, time_l
     the original proven cost; a refined-pool optimum alone cannot certify it.
     Bound retries and retain the audited baseline when repair is unsuccessful.
     """
-    parameters = audit_parameters()
-    dense = dense_observer(observer, objects)
+    parameters = audit_parameters(**parameters) if parameters is not None else audit_parameters()
+    dense = dense_observer(observer, objects, sample_grid=parameters["sample_grid"])
     initial = audit_observations(selected, objects, dense)
     audit = dict(initial=deepcopy(initial), final=initial, repairs=[], same_cost_searches=[], parameters=parameters,
                  scope='selected_actions_only_not_full_candidate_matrix')
@@ -160,7 +158,7 @@ def verify_observations(selected, objects, camera, observer):
         raise ValueError('Final observations failed coverage verification')
 
 
-def verify_plan(selected, objects, camera, observer):
+def verify_plan(selected, objects, camera, observer, *, sample_grid=96):
     """Verify both plans under the original model; fall back if the new plan fails."""
     verify_observations(selected['baseline'], objects, camera, observer)
     try:
@@ -174,7 +172,7 @@ def verify_plan(selected, objects, camera, observer):
         selected['optimization'].update(lexicographic_optimal=False,
             geometry_verification='new_plan_failed_baseline_passed', fallback_reason=str(exc))
         if observer:
-            dense = dense_observer(observer, objects)
+            dense = dense_observer(observer, objects, sample_grid=sample_grid)
             selected['optimization']['high_density_verification']['final'] = audit_observations(
                 selected, objects, dense)
     return selected

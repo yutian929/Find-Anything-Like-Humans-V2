@@ -95,9 +95,9 @@ class CameraParameterTests(unittest.TestCase):
             default = Path(folder)/"data/camera.json"
             default.parent.mkdir()
             default.write_text('{"manually_measured_mount": true}\n')
-            with patch.object(camera, "DEFAULT_CONFIG", default), patch.object(camera, "load_sdk", return_value=sdk([device()])), contextlib.redirect_stdout(io.StringIO()):
+            with patch.object(camera, "load_sdk", return_value=sdk([device()])), contextlib.redirect_stdout(io.StringIO()):
                 args = ["--width", "200", "--height", "100", "--output", str(output)]
-                self.assertEqual(camera.main(args), 0)
+                self.assertEqual(camera.main(args, camera_path=default), 0)
                 saved = json.loads(output.read_text())
                 self.assertEqual(set(saved["camera"]), {
                     "width", "height", "fx", "fy", "cx", "cy",
@@ -105,7 +105,7 @@ class CameraParameterTests(unittest.TestCase):
                 self.assertIsNone(saved["mount"]["yaw_deg"])
                 self.assertTrue(json.loads(default.read_text())["manually_measured_mount"])
                 before = output.read_bytes()
-                self.assertEqual(camera.main(args+["--list-modes"]), 0)
+                self.assertEqual(camera.main(args+["--list-modes"], camera_path=default), 0)
                 self.assertEqual(output.read_bytes(), before)
 
 

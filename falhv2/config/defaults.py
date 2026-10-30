@@ -1,6 +1,5 @@
 """项目路径与实验默认参数。物理标定、地图和机器人参数仍读取 data/ JSON。"""
 from pathlib import Path
-import json
 
 ROOT = Path(__file__).resolve().parents[1]
 DATA_DIR = ROOT / 'data'
@@ -42,9 +41,14 @@ MAX_AUDIT_RETRIES = 3             # 高密度复核失败后的重选次数；0 
 SAME_COST_REPAIR_TIME_LIMIT_S = 2.0 # 已有最优性证明时，先限时寻找同成本修复；0 关闭
 
 
-def read_input(path: Path) -> dict:
-    """只读取指定输入；缺失时明确报错，不自动选择其他文件。"""
-    try:
-        return json.loads(path.read_text(encoding='utf-8'))
-    except FileNotFoundError as exc:
-        raise ValueError(f'输入文件不存在：{path}。请检查 config/defaults.py 中的路径或用命令行指定输入。') from exc
+# Cubify Anything: one model, one configuration block.
+CUBIFY = {
+    "mode": "local",             # local | remote
+    "path": str(Path.home() / "models_weights/cubifyanything/cutr_rgbd.pth"),
+    "source_path": str(Path.home() / "map_test_new_v8_clean"),  # SDK root; None if installed
+    "device": "auto",
+    "max_side": 768,              # RGB longest side, 256..1024
+    "score_threshold": 0.25,
+    "url": "http://127.0.0.1:8093",  # Remote model address, including port
+    "timeout": 60,                # Remote HTTP timeout in seconds
+}

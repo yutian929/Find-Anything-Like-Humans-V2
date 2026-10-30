@@ -18,7 +18,7 @@
 - model_clients：本地与远程实例分割，业务层只面向 InstanceSegmenter。
 - map_maintainers：深度反投影、多帧关联、实例融合、生命周期、快照与规划导出。
 - 数据结构归入所属模块的 base.py：robot_adapters 定义采集数据，model_clients 定义推理结果，map_maintainers 定义地图快照；导入这些接口不加载 ROS、相机 SDK、torch 或网络客户端。
-- config：规划默认参数；后续 robot/model/map_maintainers 配置应分开。
+- config：由 main.py 选择并加载，其他模块显式接收参数；模型使用一个模型一个字典（如 CUBIFY），不增加独立的本地/远程配置块。
 - tools / assets：人工地图编辑、相机标定工具及页面。
 
 数据流：

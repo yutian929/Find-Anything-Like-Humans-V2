@@ -99,14 +99,24 @@ cd /home/hri/yutian/Find-Anything-Like-Humans-V2
 
 ## 输入与输出管理
 
-主程序直接通过 `from falhv2.config import defaults as settings` 加载配置。
+只有 main.py 加载项目配置，其余模块通过函数或构造参数接收所需值，不 import config。
+默认读取 config/defaults.py；使用 `--config /path/to/experiment.py` 可选择其他 Python 配置。
+配置文件中的大写变量覆盖默认项，字典按键合并；未指定的参数沿用默认值，CLI 再覆盖本次运行。
+顶层路径参数如 MAP_PATH、OUTPUT_DIR 的相对路径以所选配置文件目录为基准；模型字典中的路径建议写绝对路径。
+
+```bash
+python falhv2/main.py --config /path/to/experiment.py
+python falhv2/main.py --config /path/to/robot.py --task cubify-preview
+```
+
+模型仍是一模型一个字典，例如 CUBIFY；无需为本地、远程和预览分别增加配置块。
 `main(argv)` 解析命令行、按选定路径读取三份 JSON，再调用 `plan(...)`，最后导出结果。
 `plan(...)` 负责安全区域、候选生成、优化和复核；未显式传入的规划参数取自 settings。
 方向间隔、并行参数和求解预算以 CLI 显式参数优先；观察门槛以相机 JSON 中显式
 提供的同名字段优先于 `OBSERVATION_DEFAULTS`。输入输出路径由配置文件位置解析，
 不依赖启动目录。更改配置后需重新运行程序。
 
-所有入口通过 [config/defaults.py](config/defaults.py) 统一管理默认路径，路径相对 `falhv2` 目录解析，不受启动工作目录影响。
+main.py 通过 [config/defaults.py](config/defaults.py) 统一管理默认路径，并显式传给各模块，路径相对 `falhv2` 目录解析，不受启动工作目录影响。
 
 | 目录 / 文件 | 用途与维护方式 |
 |---|---|
@@ -175,9 +185,9 @@ Python 调用使用 `from falhv2.main import plan`；它返回
 旧的顶层模块路径已迁移，不再保留一排转发脚本。
 `anchor_planners.anchor_selector` 只提供选点算法，不再提供 `plan()`、CLI 或脚本启动入口。完整流程统一使用 `falhv2.main`。
 独立命令统一使用包入口（在仓库根目录执行）：
-`python -m falhv2.tools.map_editor`、
-`python -m falhv2.tools.camera_parameters`、
-`python -m falhv2.anchor_planners.regions_extractor`。
+`python falhv2/main.py --task map-editor`、
+`python falhv2/main.py --task camera-parameters`、
+`python falhv2/main.py --task safe-regions`。
 旧 docs 中的历史运行记录不改写，当前命令以本 README 为准。
 
 ## 地图编辑器
@@ -185,7 +195,7 @@ Python 调用使用 `from falhv2.main import plan`；它返回
 启动本地服务：
 
 ```bash
-python -m falhv2.tools.map_editor
+python falhv2/main.py --task map-editor
 ```
 
 浏览器打开 `http://127.0.0.1:8765`，可通过 `--port` 指定其他端口。
@@ -226,7 +236,7 @@ python -m falhv2.tools.map_editor
 运行示例：
 
 ```bash
-python -B -m falhv2.anchor_planners.regions_extractor
+python -B falhv2/main.py --task safe-regions
 ```
 
 默认读取 `data/map_aabb.json` 和 `data/robot.json`，缺失时报错。需要使用其他地图时通过 `--scene` 显式指定。`outputs/` 和备份目录 `outputs_/` 不纳入版本控制；删除 outputs 不影响正式输入。
@@ -234,7 +244,7 @@ python -B -m falhv2.anchor_planners.regions_extractor
 也可显式指定输入和输出：
 
 ```bash
-python -B -m falhv2.anchor_planners.regions_extractor \
+python -B falhv2/main.py --task safe-regions \
   --scene falhv2/data/map_aabb.json \
   --robot falhv2/data/robot.json \
   --output falhv2/outputs/safe_regions.json \
@@ -268,7 +278,7 @@ A1 不再生成全覆盖扫描路线，区域中的每个安全格中心直接�
 使用 conda `test` 环境中的 RealSense Python SDK `pyrealsense2` 直接读取标定。当前已安装 `2.59.1.11053`；新环境可运行 `python -m pip install pyrealsense2`。在仓库根目录执行：
 
 ```bash
-python -B -m falhv2.tools.camera_parameters
+python -B falhv2/main.py --task camera-parameters
 ```
 
 默认读取 RGB **1280×720、BGR8、30 FPS** 对应的内参，保存到本地 `falhv2/outputs/camera.d435i.json`。脚本查询设备标定，不启动视频采集；后续实际图像应使用相同的分辨率及几何处理。
@@ -293,7 +303,7 @@ python -B -m falhv2.tools.camera_parameters
 支持通过 `--width`、`--height`、`--fps`、`--format` 指定实际拍摄模式，`--serial` 选择设备；列出支持的 RGB 模式：
 
 ```bash
-python -B -m falhv2.tools.camera_parameters --list-modes
+python -B falhv2/main.py --task camera-parameters --list-modes
 ```
 
 在 `falhv2` 目录内运行时省略命令中的 `falhv2/` 即可。深度流可通过 `--stream depth --width 640 --height 480 --output falhv2/outputs/camera.depth.json` 另存；后续 RGB 观察模型使用 RGB 配置。

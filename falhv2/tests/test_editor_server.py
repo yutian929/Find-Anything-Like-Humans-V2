@@ -1,4 +1,5 @@
 import io
+from types import SimpleNamespace
 import sys
 import unittest
 from pathlib import Path
@@ -10,6 +11,7 @@ from falhv2.tools.map_editor import EditorHandler
 class EditorServerTests(unittest.TestCase):
     def request(self, path):
         handler = object.__new__(EditorHandler)
+        handler.server = SimpleNamespace(page_path=Path(__file__).resolve().parents[1]/"assets/map_editor.html")
         handler.path = path
         handler.wfile = io.BytesIO()
         response = {"headers": {}}

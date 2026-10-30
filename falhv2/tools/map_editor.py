@@ -2,9 +2,8 @@
 
 import argparse
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
-from ..config import defaults as settings
+from pathlib import Path
 
-PAGE = settings.EDITOR_PAGE
 
 
 class EditorHandler(BaseHTTPRequestHandler):
@@ -12,7 +11,7 @@ class EditorHandler(BaseHTTPRequestHandler):
         if self.path not in ("/", "/map_editor.html"):
             self.send_error(404)
             return
-        payload = PAGE.read_bytes()
+        payload = self.server.page_path.read_bytes()
         self.send_response(200)
         self.send_header("Content-Type", "text/html; charset=utf-8")
         self.send_header("Cache-Control", "no-store")
@@ -21,12 +20,15 @@ class EditorHandler(BaseHTTPRequestHandler):
         self.wfile.write(payload)
 
 
-def main():
+def main(argv=None, *, page_path=None, map_path=None):
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--port", type=int, default=8765)
-    args = parser.parse_args()
+    parser.add_argument("--page", type=Path, default=page_path, required=page_path is None)
+    parser.add_argument("--map-output", type=Path, default=map_path, required=map_path is None)
+    args = parser.parse_args(argv)
     server = ThreadingHTTPServer(("127.0.0.1", args.port), EditorHandler)
-    print(f"导出地图后请保存到：{settings.MAP_PATH}", flush=True)
+    server.page_path = Path(args.page)
+    print(f"导出地图后请保存到：{args.map_output}", flush=True)
     print(f"打开浏览器：http://127.0.0.1:{args.port}", flush=True)
     try:
         server.serve_forever()

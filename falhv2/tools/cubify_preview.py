@@ -1,6 +1,6 @@
 """Capture one live RGB-D frame and visualize CuTR cuboids (no motion commands).
 
-Run from repository root: python -m falhv2.tools.cubify_preview --help
+Run from repository root: python falhv2/main.py --task cubify-preview --help
 """
 from __future__ import annotations
 
@@ -16,7 +16,7 @@ from zoneinfo import ZoneInfo
 import cv2
 import numpy as np
 
-from ..model_clients import build_cubify_anything
+from ..model_clients import build_cubify_anything, get_cubify_config
 from ..model_clients.cubify_anything import encode_result
 from ..robot_adapters.anchor_map import AnchorMapRobot
 
@@ -112,23 +112,40 @@ def save_preview(frame, result, prefix, *, threshold, elapsed_s, max_boxes):
     fig.write_html(str(prefix)+".html",include_plotlyjs=True)
 
 
-def main(argv=None):
+def parse_options(argv=None, *, model_config, output_dir):
     parser=argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--weights",default="/home/hri/models_weights/cubifyanything/cutr_rgbd.pth")
-    parser.add_argument("--source-path",default="/home/hri/map_test_new_v8_clean")
-    parser.add_argument("--server-url",help="Use an existing HTTP model server instead of local inference")
+    parser.add_argument("--mode", choices=("local","remote"))
+    parser.add_argument("--weights")
+    parser.add_argument("--source-path")
+    parser.add_argument("--server-url",help="Override HTTP address and select remote mode")
+    parser.add_argument("--threshold",type=float)
+    parser.add_argument("--max-side",type=int)
+    parser.add_argument("--device")
+    parser.add_argument("--timeout-s",type=float)
     parser.add_argument("--endpoint",default="ipc:///tmp/rgbd_pose.ipc")
-    parser.add_argument("--threshold",type=float,default=.25)
     parser.add_argument("--max-boxes",type=int,default=20)
-    parser.add_argument("--max-side",type=int,default=768)
-    parser.add_argument("--device",default="cuda")
-    parser.add_argument("--output-dir",default=str(Path(__file__).resolve().parents[1]/"outputs"))
+    parser.add_argument("--output-dir",default=str(output_dir))
     args=parser.parse_args(argv)
     if args.max_boxes < 1:
         parser.error("--max-boxes must be positive")
-    config=dict(mode="remote",server_url=args.server_url) if args.server_url else dict(
-        mode="local",path=args.weights,source_path=args.source_path,device=args.device,max_side=args.max_side)
-    config["score_threshold"]=args.threshold
+    if args.server_url is not None and args.mode == "local":
+        parser.error("--server-url conflicts with --mode local")
+    overrides={}
+    for attribute,key in (("mode","mode"),("weights","path"),("source_path","source_path"),
+                          ("server_url","url"),("threshold","score_threshold"),
+                          ("max_side","max_side"),("device","device"),("timeout_s","timeout")):
+        value=getattr(args,attribute)
+        if value is not None:
+            overrides[key]=value
+    if args.server_url is not None:
+        overrides["mode"]="remote"
+    config=get_cubify_config({**model_config, **overrides})
+    args.threshold=config["score_threshold"]
+    return args,config
+
+
+def main(argv=None, *, model_config, output_dir):
+    args,config=parse_options(argv, model_config=model_config, output_dir=output_dir)
     client=build_cubify_anything(config)
     try:
         # This is a camera-frame preview, not a persistent map integration.
@@ -146,7 +163,3 @@ def main(argv=None):
     print(json.dumps(dict(prefix=str(prefix),frame_id=frame.frame_id,timestamp_ns=frame.timestamp_ns,
                           predictions=len(result.cuboids),displayed=min(len(result.cuboids),args.max_boxes),
                           inference_s=elapsed,scores=[b.confidence for b in result.cuboids]),indent=2))
-
-
-if __name__ == "__main__":
-    main()

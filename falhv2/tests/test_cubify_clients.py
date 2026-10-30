@@ -191,3 +191,66 @@ class CubifyHTTPTests(unittest.TestCase):
             server.shutdown()
             thread.join(5)
             server.server_close()
+
+
+class CubifyConfigurationTests(unittest.TestCase):
+    def test_explicit_remote_parameters_do_not_construct_local_model(self):
+        from unittest.mock import patch
+        config=dict(mode="remote",url="http://127.0.0.1:18765",timeout=7,
+                    score_threshold=.61,path="/missing/weights")
+        with patch("falhv2.model_clients.cubify_anything.CubifyAnythingLocal") as local:
+            client=build_cubify_anything(config)
+            try:
+                self.assertEqual(client.server_url,config["url"])
+                self.assertEqual(client.timeout_s,7)
+                self.assertEqual(client.score_threshold,.61)
+                local.assert_not_called()
+            finally:
+                client.close()
+
+    def test_local_parameters_are_isolated_and_remote_keys_filtered(self):
+        from unittest.mock import patch
+        config=dict(mode="local",path="/explicit/weights",max_side=512,
+                    score_threshold=.42,url="http://host:8093")
+        before=dict(config)
+        with patch("falhv2.model_clients.cubify_anything.CubifyAnythingLocal") as local:
+            build_cubify_anything(config)
+            kwargs=local.call_args.kwargs
+            self.assertEqual(kwargs["path"],config["path"])
+            self.assertEqual(kwargs["max_side"],512)
+            self.assertNotIn("url",kwargs)
+        self.assertEqual(config,before)
+        with self.assertRaises(TypeError):
+            build_cubify_anything({"score_threshol":.3})
+        with self.assertRaises(TypeError):
+            build_cubify_anything()
+
+    def test_preview_respects_injected_parameters_and_cli_overrides(self):
+        from falhv2.tools.cubify_preview import parse_options
+        config=dict(mode="remote",url="http://host:8123",score_threshold=.6,max_side=512)
+        args,cfg=parse_options([],model_config=config,output_dir="/explicit/output")
+        self.assertEqual(cfg["mode"],"remote")
+        self.assertEqual(cfg["url"],"http://host:8123")
+        self.assertEqual(args.threshold,.6)
+        self.assertEqual(args.output_dir,"/explicit/output")
+        args,cfg=parse_options(["--mode","local","--threshold","0.4","--max-side","640"],
+                               model_config=config,output_dir="/explicit/output")
+        self.assertEqual(cfg["mode"],"local")
+        self.assertEqual(cfg["max_side"],640)
+        self.assertEqual(args.threshold,.4)
+        self.assertEqual(config["mode"],"remote")
+
+    def test_server_uses_injected_port_and_always_loads_local_backend(self):
+        from unittest.mock import patch, MagicMock
+        from falhv2.tools import cubify_server
+        config=dict(mode="remote",path="/weights",source_path=None,device="cpu",
+                    max_side=512,score_threshold=.7,url="http://127.0.0.1:18999")
+        client,app=MagicMock(),MagicMock()
+        with patch("falhv2.model_clients.build_cubify_anything",return_value=client) as factory, \
+             patch.object(cubify_server,"create_app",return_value=app):
+            cubify_server.main([],model_config=config)
+            self.assertEqual(factory.call_args.args[0]["mode"],"local")
+            self.assertEqual(factory.call_args.args[0]["max_side"],512)
+            self.assertEqual(factory.call_args.args[0]["score_threshold"],.7)
+            self.assertEqual(app.run.call_args.kwargs["port"],18999)
+            client.close.assert_called_once()

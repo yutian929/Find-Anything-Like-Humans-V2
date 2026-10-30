@@ -10,9 +10,7 @@ import json
 import math
 from pathlib import Path
 
-from ..config import defaults as settings
 
-DEFAULT_CONFIG = settings.CAMERA_PATH
 
 
 class CameraReadError(ValueError):
@@ -105,7 +103,7 @@ def save_config(config: dict, output: Path) -> None:
     output.write_text(content, encoding="utf-8")
 
 
-def main(argv: list[str] | None = None) -> int:
+def main(argv: list[str] | None = None, *, output_path=None, camera_path=None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--width", type=int, default=1280)
     parser.add_argument("--height", type=int, default=720)
@@ -114,8 +112,10 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--format", help="默认 color=BGR8，depth=Z16")
     parser.add_argument("--serial", help="多台相机时明确选择设备")
     parser.add_argument("--list-modes", action="store_true", help="列出分辨率、格式与帧率，不写文件")
-    parser.add_argument("--output", type=Path, default=settings.CAMERA_EXPORT_PATH)
+    parser.add_argument("--output", type=Path, default=output_path)
     args = parser.parse_args(argv)
+    if args.output is None and not args.list_modes:
+        parser.error("--output is required outside the main entry point")
     if min(args.width, args.height, args.fps) <= 0:
         parser.error("宽高和 fps 必须为正整数")
     try:
@@ -148,8 +148,8 @@ def main(argv: list[str] | None = None) -> int:
     print(f"畸变：{intr['distortion_model']} {intr['distortion_coefficients']}")
     print(f"读取结果：{args.output}")
     print("请人工填写 mount 与 observation_quality 中的 null；本次未验证图像采集。")
-    if args.stream == "color":
-        print(f"补全后请自行将文件放到：{DEFAULT_CONFIG}")
+    if args.stream == "color" and camera_path is not None:
+        print(f"补全后请自行将文件放到：{camera_path}")
     return 0
 
 

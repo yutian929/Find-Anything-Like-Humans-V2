@@ -28,19 +28,84 @@ from falhv2.anchor_planners.anchor_export import export_plan, export_safe_region
 LOGGER = logging.getLogger(__name__)
 
 
+def load_config(path=None):
+    """Select a Python config in the entry point; omitted fields inherit defaults."""
+    if path is None:
+        return settings
+    import runpy
+    from types import SimpleNamespace
+    path = Path(path).expanduser().resolve()
+    if path.suffix != '.py':
+        raise ValueError('--config must name a Python configuration file')
+    selected = runpy.run_path(str(path))
+    values = {key: value for key, value in vars(settings).items() if key.isupper()}
+    for key, value in selected.items():
+        if not key.isupper():
+            continue
+        if isinstance(values.get(key), Path) and isinstance(value, (str, Path)):
+            value = Path(value).expanduser()
+            value = value if value.is_absolute() else path.parent / value
+        if isinstance(value, dict) and isinstance(values.get(key), dict):
+            value = {**values[key], **value}
+        values[key] = value
+    return SimpleNamespace(**values)
+
+
+def read_input(path):
+    try:
+        return json.loads(Path(path).read_text(encoding='utf-8'))
+    except FileNotFoundError as exc:
+        raise ValueError(f'Input file missing: {path}; check --config or explicit input paths') from exc
+
+
+def configured_camera(camera_config, config=None):
+    config = settings if config is None else config
+    return {**camera_config, 'observation_quality': {
+        **config.OBSERVATION_DEFAULTS, **camera_config.get('observation_quality', {})}}
+
+
+def planning_audit(config=None):
+    config = settings if config is None else config
+    return verification.audit_parameters(
+        sample_grid=config.AUDIT_SAMPLE_GRID, max_retries=config.MAX_AUDIT_RETRIES,
+        same_cost_time_limit_s=config.SAME_COST_REPAIR_TIME_LIMIT_S)
+
+
+def run_task(task, argv, config):
+    """Pass only the parameters a tool needs; tools never load project config."""
+    if task == 'cubify-preview':
+        from falhv2.tools.cubify_preview import main as run
+        return run(argv, model_config=dict(config.CUBIFY), output_dir=config.OUTPUT_DIR)
+    if task == 'cubify-server':
+        from falhv2.tools.cubify_server import main as run
+        return run(argv, model_config=dict(config.CUBIFY))
+    if task == 'safe-regions':
+        from falhv2.anchor_planners.regions_extractor import main as run
+        return run(argv, scene_path=config.MAP_PATH, robot_path=config.ROBOT_PATH,
+                   output_path=config.SAFE_REGIONS_PATH, svg_path=config.SAFE_REGIONS_SVG_PATH)
+    if task == 'map-editor':
+        from falhv2.tools.map_editor import main as run
+        return run(argv, page_path=config.EDITOR_PAGE, map_path=config.MAP_PATH)
+    if task == 'camera-parameters':
+        from falhv2.tools.camera_parameters import main as run
+        return run(argv, output_path=config.CAMERA_EXPORT_PATH, camera_path=config.CAMERA_PATH)
+    raise ValueError(f'Unknown task: {task}')
+
+
 def plan(scene, robot_config, camera_config, *, yaw_step_deg=None, selection_time_limit_s=None,
-         ray_backend='numpy', observation_workers=None, observation_executor=None):
+         ray_backend='numpy', observation_workers=None, observation_executor=None, project_config=None):
     """Select object-driven anchors directly from safe regions; no route is built.
 
     Targets are world-frame 3D centers; base positions are (x, y, 0).
     A station may take multiple yaw-directed photos. AABB coverage uses clipped
     framing, sampled occlusion/pixels and radial score; point maps use legacy FOV/range.
     """
-    yaw_step_deg = settings.YAW_STEP_DEG if yaw_step_deg is None else yaw_step_deg
-    selection_time_limit_s = settings.SELECTION_TIME_LIMIT_S if selection_time_limit_s is None else selection_time_limit_s
-    audit_parameters = verification.audit_parameters()
-    observation_workers = settings.OBSERVATION_WORKERS if observation_workers is None else observation_workers
-    observation_executor = settings.OBSERVATION_EXECUTOR if observation_executor is None else observation_executor
+    cfg = settings if project_config is None else project_config
+    yaw_step_deg = cfg.YAW_STEP_DEG if yaw_step_deg is None else yaw_step_deg
+    selection_time_limit_s = cfg.SELECTION_TIME_LIMIT_S if selection_time_limit_s is None else selection_time_limit_s
+    audit_parameters = planning_audit(cfg)
+    observation_workers = cfg.OBSERVATION_WORKERS if observation_workers is None else observation_workers
+    observation_executor = cfg.OBSERVATION_EXECUTOR if observation_executor is None else observation_executor
     if isinstance(observation_workers, bool) or not isinstance(observation_workers, int) or observation_workers < 1:
         raise ValueError('observation workers must be a positive integer')
     if observation_executor not in ('threads', 'processes'):
@@ -52,7 +117,7 @@ def plan(scene, robot_config, camera_config, *, yaw_step_deg=None, selection_tim
             or not math.isfinite(selection_time_limit_s) or selection_time_limit_s <= 0):
         raise ValueError('selection time limit must be finite and positive')
     objects = validate_objects(scene.get("objects", []))
-    camera = PointCamera(camera_config)
+    camera = PointCamera(configured_camera(camera_config, cfg))
     yaw_grid(yaw_step_deg)
     started = perf_counter()
     LOGGER.info('1/5 提取安全区域与候选站位')
@@ -72,9 +137,9 @@ def plan(scene, robot_config, camera_config, *, yaw_step_deg=None, selection_tim
     observer = BoxObserver(camera, objects, ray_backend='numpy') if objects and 'aabb' in objects[0] else None
     if observer:
         selected = verification.refine_after_audit(selected, candidates, stations, objects, observer,
-                                                   selection_time_limit_s)
+                                                   selection_time_limit_s, parameters=audit_parameters)
     selection = perf_counter() - started
-    selected = verification.verify_plan(selected, objects, camera, observer)
+    selected = verification.verify_plan(selected, objects, camera, observer, sample_grid=audit_parameters["sample_grid"])
     result = {
         'schema_version': 5, 'method': 'object_driven_lexicographic',
         'candidate_scope': 'all_safe_cell_centers_in_all_regions',
@@ -107,12 +172,24 @@ def plan(scene, robot_config, camera_config, *, yaw_step_deg=None, selection_tim
 
 def main(argv=None):
     logging.basicConfig(level=logging.INFO, format='%(message)s')
-    parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument('--scene', type=Path, default=settings.MAP_PATH)
-    parser.add_argument('--robot', type=Path, default=settings.ROBOT_PATH)
-    parser.add_argument('--camera', type=Path, default=settings.CAMERA_PATH)
+    common = argparse.ArgumentParser(add_help=False)
+    common.add_argument('--config', type=Path, help='Python config file; defaults to config/defaults.py')
+    common.add_argument('--task', default='anchors',
+                        choices=('anchors', 'cubify-preview', 'cubify-server',
+                                 'safe-regions', 'map-editor', 'camera-parameters'))
+    options, remaining = common.parse_known_args(argv)
+    try:
+        config = load_config(options.config)
+    except (OSError, ValueError, SyntaxError) as exc:
+        common.error(str(exc))
+    if options.task != 'anchors':
+        return run_task(options.task, remaining, config)
+    parser = argparse.ArgumentParser(description=__doc__, parents=[common])
+    parser.add_argument('--scene', type=Path, default=config.MAP_PATH)
+    parser.add_argument('--robot', type=Path, default=config.ROBOT_PATH)
+    parser.add_argument('--camera', type=Path, default=config.CAMERA_PATH)
     parser.add_argument('--yaw-step-deg', type=float, default=None,
-                        help=f'底盘拍摄偏航间隔，单位度，默认读取 config/defaults.py（{settings.YAW_STEP_DEG}）')
+                        help=f'底盘拍摄偏航间隔，单位度，默认读取 config/defaults.py（{config.YAW_STEP_DEG}）')
     parser.add_argument('--selection-time-limit-s', type=float, default=None,
                         help='全部 MILP 调用（含复核重选）的总时间预算；默认读取 config/defaults.py，不含观察计算与建模')
     parser.add_argument('--save-supports', action=argparse.BooleanOptionalAction, default=True,
@@ -123,27 +200,28 @@ def main(argv=None):
                         help='逐物体候选计算的 worker 数；默认读取 config/defaults.py；1 恢复串行')
     parser.add_argument('--observation-executor', choices=('threads', 'processes'), default=None,
                         help='候选并行方式；默认读取 config/defaults.py')
-    parser.add_argument('--output', type=Path, default=settings.ANCHOR_PLAN_PATH)
-    args = parser.parse_args(argv)
+    parser.add_argument('--output', type=Path, default=config.ANCHOR_PLAN_PATH)
+    args = parser.parse_args(remaining)
     try:
         if args.output.suffix.lower() != '.json':
             raise ValueError('--output must have a .json suffix')
         if args.selection_time_limit_s is not None and (not math.isfinite(args.selection_time_limit_s) or args.selection_time_limit_s <= 0):
             raise ValueError('--selection-time-limit-s must be finite and positive')
-        scene = settings.read_input(args.scene)
-        robot = settings.read_input(args.robot)
-        camera = settings.read_input(args.camera)
+        scene = read_input(args.scene)
+        robot = read_input(args.robot)
+        camera = read_input(args.camera)
         result, regions, stations, candidates = plan(scene, robot, camera, yaw_step_deg=args.yaw_step_deg,
                                                        selection_time_limit_s=args.selection_time_limit_s,
                                                        ray_backend=args.ray_backend,
                                                        observation_workers=args.observation_workers,
-                                                       observation_executor=args.observation_executor)
+                                                       observation_executor=args.observation_executor,
+                                                       project_config=config)
         LOGGER.info('5/5 导出安全区域、计划与离线可视化')
         export_plan(args.output, scene, camera, result, regions, stations, candidates,
-                    include_supports=args.save_supports)
+                    include_supports=args.save_supports, template_path=config.ANCHOR_VIEWER_TEMPLATE)
         # Respect configured A1 paths for the default run; keep custom runs together.
-        if args.output.resolve() == settings.ANCHOR_PLAN_PATH.resolve():
-            regions_output, regions_svg = settings.SAFE_REGIONS_PATH, settings.SAFE_REGIONS_SVG_PATH
+        if args.output.resolve() == config.ANCHOR_PLAN_PATH.resolve():
+            regions_output, regions_svg = config.SAFE_REGIONS_PATH, config.SAFE_REGIONS_SVG_PATH
         else:
             regions_output = args.output.with_suffix('.safe_regions.json')
             regions_svg = args.output.with_suffix('.safe_regions.svg')

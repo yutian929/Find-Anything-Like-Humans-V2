@@ -10,7 +10,6 @@ from __future__ import annotations
 
 import numpy as np
 
-from ..config import defaults as settings
 
 def camera_poses(camera, positions, yaws):
     positions = np.asarray(positions, dtype=float).reshape(-1, 2)
@@ -81,8 +80,8 @@ def radial_weight(radius, near, far, inner_weight=None, outer_weight=None):
     Only call for a valid envelope. Clipping absorbs numerical boundary slack;
     it never makes an out-of-region pose eligible.
     """
-    inner_weight = settings.OBSERVATION_DEFAULTS['radial_inner_weight'] if inner_weight is None else inner_weight
-    outer_weight = settings.OBSERVATION_DEFAULTS['radial_outer_weight'] if outer_weight is None else outer_weight
+    inner_weight = 1.0 if inner_weight is None else inner_weight
+    outer_weight = .5 if outer_weight is None else outer_weight
     span = np.asarray(far)-near
     fraction = np.divide(np.asarray(radius)-near, span,
                          out=np.zeros_like(np.asarray(radius), dtype=float), where=span > 1e-9)

@@ -6,7 +6,6 @@ from pathlib import Path
 
 import numpy as np
 
-from ..config import defaults as settings
 from .regions_extractor import diagnostic_svg
 from .observation_model import PointCamera
 from .anchor_candidates import object_heatmaps
@@ -111,7 +110,7 @@ def save_supports(destination, scene, stations, candidates):
     destination.write_text(json.dumps(relation, ensure_ascii=False, allow_nan=False)+'\n', encoding='utf-8')
 
 
-def export_plan(output, scene, camera_config, result, regions, stations, candidates, *, include_supports=True):
+def export_plan(output, scene, camera_config, result, regions, stations, candidates, *, template_path, include_supports=True):
     """Write the plan and views without rerunning observation or selection."""
     output = Path(output)
     if output.suffix.lower() != ".json":
@@ -119,7 +118,7 @@ def export_plan(output, scene, camera_config, result, regions, stations, candida
     payload = json.dumps(viewer_data(scene, camera_config, result, regions, stations, candidates),
                          ensure_ascii=False, allow_nan=False, separators=(',', ':'))
     payload = payload.replace('<', '\\u003c').replace('>', '\\u003e').replace('&', '\\u0026')
-    page = settings.ANCHOR_VIEWER_TEMPLATE.read_text(encoding='utf-8').replace('__ANCHOR_DATA__', payload)
+    page = Path(template_path).read_text(encoding='utf-8').replace('__ANCHOR_DATA__', payload)
     output.parent.mkdir(parents=True, exist_ok=True)
     output.write_text(json.dumps(result, ensure_ascii=False, indent=2, allow_nan=False)+'\n', encoding='utf-8')
     output.with_suffix('.svg').write_text(render_svg(scene, regions, result, stations, candidates), encoding='utf-8')

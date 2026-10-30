@@ -15,6 +15,7 @@ from pathlib import Path
 
 import numpy as np
 
+
 from ..robot_adapters.base import MAX_PIXELS, transform, validate_frame
 from ..robot_adapters.base import CameraIntrinsics, RGBDFrame
 from ..model_clients.base import Cuboid3D, CuboidDetectionResult
@@ -157,8 +158,11 @@ class CubifyAnythingLocal:
     Map +Z must be gravity aligned; images must already be upright/rectified.
     """
 
-    def __init__(self, path, *, source_path=None, device="auto", score_threshold=0.25,
-                 max_side=1024):
+    def __init__(self, path, *, source_path=None, device=None, score_threshold=None,
+                 max_side=None):
+        device = "auto" if device is None else device
+        max_side = 768 if max_side is None else max_side
+        score_threshold = .25 if score_threshold is None else score_threshold
         self.score_threshold = threshold(score_threshold)
         if isinstance(max_side, bool) or not isinstance(max_side, int) or not 256 <= max_side <= 1024:
             raise ValueError("max_side must be an integer in [256,1024]")
@@ -264,7 +268,9 @@ class CubifyAnythingLocal:
 
 
 class CubifyAnythingRemote:
-    def __init__(self, server_url, *, timeout_s=60., score_threshold=0.25):
+    def __init__(self, server_url, *, timeout_s=None, score_threshold=None):
+        timeout_s = 60. if timeout_s is None else timeout_s
+        score_threshold = .25 if score_threshold is None else score_threshold
         from urllib.parse import urlparse
         import requests
         if not isinstance(server_url, str) or urlparse(server_url).scheme not in ("http", "https") or not urlparse(server_url).netloc:

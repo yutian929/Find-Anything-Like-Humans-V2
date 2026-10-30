@@ -189,7 +189,7 @@ class OptimizerTests(unittest.TestCase):
         self.assertEqual(r['anchors'], r['baseline']['anchors'])
         self.assertFalse(r['optimization']['lexicographic_optimal'])
 
-    def audit_case(self, alternate=True, time_limit_s=None, proven=True):
+    def audit_case(self, alternate=True, time_limit_s=None, proven=True, **audit_options):
         supports = {0: {0: set('1234')}, 1: {0: set('125')},
                     2: {0: set('346')}, 3: {0: {'5'}}, 4: {0: {'6'}}}
         if alternate:
@@ -209,7 +209,7 @@ class OptimizerTests(unittest.TestCase):
         dense = SimpleNamespace(settings=SimpleNamespace(sample_grid=96), evaluate=evaluate)
         with patch.object(verification, 'BoxObserver', return_value=dense):
             result = verification.refine_after_audit(selected, c, stations,
-                [{'id': oid} for oid in targets], SimpleNamespace(camera=None, settings=settings), time_limit_s)
+                [{'id': oid} for oid in targets], SimpleNamespace(camera=None, settings=settings), time_limit_s, parameters=verification.audit_parameters(**audit_options))
         self.assertEqual(c.supports[1][0], set('125'))  # Original heatmap/supports stay intact.
         return result
 
@@ -259,8 +259,7 @@ class OptimizerTests(unittest.TestCase):
         self.assertEqual(r['selected_cost'], r['baseline_cost'])
 
     def test_configured_zero_retries_uses_audited_baseline(self):
-        with patch.object(verification.settings, 'MAX_AUDIT_RETRIES', 0):
-            r = self.audit_case()
+        r = self.audit_case(max_retries=0)
         audit = r['optimization']['high_density_verification']
         self.assertEqual(audit['repairs'], [])
         self.assertEqual(audit['repair_status'], 'audited_baseline_fallback')
@@ -304,9 +303,8 @@ class OptimizerTests(unittest.TestCase):
         with patch.object(verification, 'find_cover_at_cost', side_effect=AssertionError('no certificate')):
             r = self.audit_case(proven=False)
         self.assertFalse(r['optimization']['lexicographic_optimal'])
-        with patch.object(verification.settings, 'SAME_COST_REPAIR_TIME_LIMIT_S', 0), \
-                patch.object(verification, 'find_cover_at_cost', side_effect=AssertionError('disabled')):
-            r = self.audit_case()
+        with patch.object(verification, 'find_cover_at_cost', side_effect=AssertionError('disabled')):
+            r = self.audit_case(same_cost_time_limit_s=0)
         self.assertEqual(r['selected_cost'], [2, 2])
 
     def test_fixed_cost_search_checks_actual_coverage_and_station_photo_links(self):
