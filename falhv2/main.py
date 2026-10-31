@@ -76,6 +76,10 @@ def run_task(task, argv, config):
     if task == 'cubify-preview':
         from falhv2.tools.cubify_preview import main as run
         return run(argv, model_config=dict(config.CUBIFY), output_dir=config.OUTPUT_DIR)
+    if task == 'build-map':
+        from falhv2.tools.build_map import main as run
+        return run(argv, model_config=dict(config.CUBIFY), robot_config=dict(config.ROBOT_SOURCE),
+                   mapping_config=dict(config.MAP_UPDATE), output_dir=config.OUTPUT_DIR)
     if task == 'cubify-server':
         from falhv2.tools.cubify_server import main as run
         return run(argv, model_config=dict(config.CUBIFY))
@@ -175,7 +179,7 @@ def main(argv=None):
     common = argparse.ArgumentParser(add_help=False)
     common.add_argument('--config', type=Path, help='Python config file; defaults to config/defaults.py')
     common.add_argument('--task', default='anchors',
-                        choices=('anchors', 'cubify-preview', 'cubify-server',
+                        choices=('anchors', 'cubify-preview', 'cubify-server', 'build-map',
                                  'safe-regions', 'map-editor', 'camera-parameters'))
     options, remaining = common.parse_known_args(argv)
     try:

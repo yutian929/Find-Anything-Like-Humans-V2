@@ -100,7 +100,7 @@ HTTP 超时不会取消服务端已开始的 GPU 推理；本地调用是同步�
 - `cuboids_to_map_aabbs` 先把所有角点变换到 map，再逐轴取 min/max；
   不能先取相机系 AABB 后只变换两个极值点。
 - AABBObservation 仅是单帧观测，没有跨帧稳定物体 ID。
-  关联、融合、去重、回环重投影、栅格地图维护与规划器导出尚未实现。
+  已通过 main.py --task build-map 实现深度约束的旧框替换、栅格读取和规划地图导出；不做关联/融合，尚不支持回环重投影。
 - legacy Frame 的 stamp 是 UNIX 秒浮点数；转换回纳秒不能恢复其已丢失的精度。
 
 ## 验证

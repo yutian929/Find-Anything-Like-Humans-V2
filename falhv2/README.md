@@ -39,6 +39,13 @@ Open3D 使用 Float32；当前地图有少量候选评分差异，且包含启�
 
 观察模型与旧加权贪心规则见[锚点选择改进说明](../docs/falhv2/anchor_selection_refine.md)：安装位姿约束观察区域、连续权重和逐物体热力图。当前选点采用下述两阶段整数优化。[旧版锚点选取图解](../docs/falhv2/anchor_selection_explained_20261019.md)保留了改进前的七张示意图和运行案例。
 
+## 真实机器人地图更新
+
+通过 `python falhv2/main.py --task build-map --map-id <地图标识> --map-revision <坐标版本> --frames 10` 获取底盘栅格和同步 RGB-D，调用 Cubify，并按当前深度可见性删除旧框、加入本帧新框，不做关联或融合。
+输出规划器兼容的地图 JSON（含恢复状态）及覆盖诊断 SVG；`--resume <地图.json>` 继续更新，`--scene <地图.json>` 用于锚点选择。
+只有 main.py 读取 CUBIFY、ROBOT_SOURCE 和 MAP_UPDATE；默认入口仍为离线选点。
+参数、版本约束与命令见 [地图维护说明](map_maintainers/README.md)。
+
 ## 当前选点目标（2026-10-24）
 
 全部输入物体至少有一次合格观察；优先最小化锚点数，再在该锚点数下最小化照片数。`anchor_optimizer.py` 使用已有 SciPy 的 `optimize.milp` 分两阶段求解，第二阶段在全部候选站位和方向上重新选择。完整候选生成沿用原观察模型、门槛和采样。

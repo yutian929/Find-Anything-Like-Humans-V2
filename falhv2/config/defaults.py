@@ -52,3 +52,21 @@ CUBIFY = {
     "url": "http://127.0.0.1:8093",  # Remote model address, including port
     "timeout": 60,                # Remote HTTP timeout in seconds
 }
+
+
+# Robot session identity must be supplied explicitly; the current API has no revision ID.
+ROBOT_SOURCE = {
+    "map_id": None,
+    "map_revision": None,
+    "endpoint": "ipc:///tmp/rgbd_pose.ipc",
+    "chassis_url": "http://192.168.11.1:1448",
+}
+
+# Replace old boxes visible in the current posed depth image; no tracking/fusion.
+MAP_UPDATE = {
+    "visible_fraction": 0.5,     # fraction of the full projected old box
+    "sample_grid": 32,          # samples per projected bounding-box axis
+    "depth_tolerance_m": 0.08,
+    "min_depth_m": 0.15,
+    "max_depth_m": 8.0,
+}

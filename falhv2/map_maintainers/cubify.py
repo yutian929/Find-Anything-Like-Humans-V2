@@ -27,7 +27,7 @@ def cuboids_to_map_aabbs(frame: RGBDFrame, result: CuboidDetectionResult) -> tup
     """Transform all 8 original corners FIRST, then take map-axis min/max.
 
     detection_index is frame-local, never a persistent object ID. MapBuilder
-    must associate/fuse these observations and handle later SLAM corrections.
+    chooses its replacement policy and must handle later SLAM corrections.
     """
     if (result.frame_id, result.timestamp_ns, result.camera_frame) != (
             frame.frame_id, frame.timestamp_ns, frame.camera_frame):
