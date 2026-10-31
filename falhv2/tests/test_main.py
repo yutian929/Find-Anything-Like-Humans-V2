@@ -33,7 +33,7 @@ class MainTests(unittest.TestCase):
             paths[name].write_text(json.dumps(data), encoding='utf-8')
         return scene, robot, paths
 
-    def test_no_arguments_exports_all_stages_from_one_region_calculation(self):
+    def test_offline_task_exports_all_stages_from_one_region_calculation(self):
         with tempfile.TemporaryDirectory() as directory:
             folder = Path(directory)
             scene, robot, inputs = self.inputs(folder)
@@ -46,7 +46,7 @@ class MainTests(unittest.TestCase):
                                 SAFE_REGIONS_PATH=regions, SAFE_REGIONS_SVG_PATH=svg), \
                     patch.object(entrypoint, 'find_safe_regions', wraps=regions_extractor.plan) as extract, \
                     contextlib.redirect_stdout(io.StringIO()):
-                self.assertEqual(entrypoint.main([]), 0)
+                self.assertEqual(entrypoint.main(['--task', 'anchors']), 0)
             extract.assert_called_once_with(scene, robot)
             for path in [output, output.with_suffix('.html'), output.with_suffix('.svg'),
                          output.with_suffix('.supports.json'), regions, svg]:
@@ -68,7 +68,7 @@ class MainTests(unittest.TestCase):
                 with self.subTest(command=command):
                     # An A1-looking plan name must not be overwritten by the A1 export.
                     output = folder / str(index) / 'safe_regions.json'
-                    run = subprocess.run([sys.executable, '-B', *command,
+                    run = subprocess.run([sys.executable, '-B', *command, '--task', 'anchors',
                         '--scene', str(inputs['scene']), '--robot', str(inputs['robot']),
                         '--camera', str(inputs['camera']), '--output', str(output),
                         '--no-save-supports'], cwd=cwd, capture_output=True, text=True)

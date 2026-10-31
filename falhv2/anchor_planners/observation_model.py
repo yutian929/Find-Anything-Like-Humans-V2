@@ -121,7 +121,11 @@ class ObservationSettings:
 
 
 def validate_objects(objects):
-    """Keep legacy points; validate optional world-frame AABBs without inventing size."""
+    """Validate world-frame boxes without assuming their bottom lies above map Z=0.
+
+    Signed heights are valid for sensed geometry; do not clip predictions or
+    require the SLAM height origin to coincide exactly with the ground.
+    """
     result, ids = [], set()
     for obj in objects:
         if not isinstance(obj, dict):
@@ -143,9 +147,9 @@ def validate_objects(objects):
             except (KeyError, TypeError, ValueError) as exc:
                 raise ValueError(f'Object {identifier} requires aabb.min/max') from exc
             if (lower.shape != (3,) or upper.shape != (3,) or not np.isfinite(lower).all()
-                    or not np.isfinite(upper).all() or np.any(lower >= upper) or lower[2] < -1e-9
+                    or not np.isfinite(upper).all() or np.any(lower >= upper)
                     or not np.allclose(point, (lower+upper)/2, rtol=0, atol=1e-6)):
-                raise ValueError(f'Object {identifier}: AABB must have positive sizes, nonnegative bottom and position at its center')
+                raise ValueError(f'Object {identifier}: AABB must have positive sizes and position at its center')
             record['aabb'] = {'min': lower.tolist(), 'max': upper.tolist()}
         ids.add(identifier)
         result.append(record)

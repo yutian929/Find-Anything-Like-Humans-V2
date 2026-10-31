@@ -62,7 +62,7 @@ class RobotDecoderTests(unittest.TestCase):
         for wrapper in (False,True):
             raw=map_bytes(wrapper)
             grid=decode_explore_map(raw,map_id="test",map_revision="1",timestamp_ns=10)
-            self.assertEqual(grid.rows,("#.?",".?#"))
+            self.assertEqual(grid.rows,(".?.","?.."))
             self.assertEqual(grid.origin,(-2.,3.))
             self.assertAlmostEqual(grid.resolution,.05)
             changed=decode_explore_map(raw[:-1]+b"\x00",map_id="test",map_revision="1",timestamp_ns=20)
@@ -72,6 +72,14 @@ class RobotDecoderTests(unittest.TestCase):
                     struct.pack("<ffiif",0,0,-1,2,.05)):
             with self.assertRaises(ValueError):
                 decode_explore_map(raw,map_id="test",map_revision="1",timestamp_ns=1)
+
+    def test_slamtec_signed_evidence_and_unknown_exterior(self):
+        # Bottom row: unknown, weak free, strong free; top: signed negatives.
+        raw = struct.pack("<ffiif",0.,0.,3,2,.05)+bytes([0,1,127,128,129,255])
+        grid = decode_explore_map(raw,map_id="room",map_revision="1",timestamp_ns=1)
+        self.assertEqual(grid.rows, ("###", "?.."))
+        self.assertEqual(grid.rows[-1][2], ".")  # robot raw 127 is free
+        self.assertEqual(grid.rows[-1][0], "?")  # unobserved exterior is NOT traversable
 
     def test_lifecycle_and_configuration(self):
         robot=AnchorMapRobot(map_id="test",map_revision="1")

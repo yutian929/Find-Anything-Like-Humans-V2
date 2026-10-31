@@ -56,3 +56,5 @@ with 退出会关闭 ZMQ socket/context 和 HTTP session。REST 直连底盘，�
 
 其他机器人以后在本目录按实际通信协议实现 `base.RobotSource`，
 保持 capture/grid_snapshot/localization 的数据约定即可，不需要改模型或锚点算法。
+
+栅格解码：底盘 explore 数据按有符号 int8 解释，0 为未知、正值为空闲、负值为占据；字节 127 是空闲，字节 129 为 -127（占据）。原点在左下，导出 rows 在转换后翻转为顶行优先。旧版误把 0 当空闲、127 当未知；旧快照上的锚点结果必须重新生成。

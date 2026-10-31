@@ -7,13 +7,13 @@ from pathlib import Path
 import json
 import numpy as np
 
-from ..map_maintainers.depth_replace import DepthReplacementMap, depth_coverage
+from ..map_maintainers.depth_replace import DepthReplacementMap
 from ..model_clients import build_cubify_anything
 from ..robot_adapters.anchor_map import AnchorMapRobot
 
 
 def save_coverage_svg(path, frame, builder, previous, mask):
-    """Top-down diagnostic, not an occupancy update or deletion mask."""
+    """Top-down display of the exact XY replacement mask; occupancy is unchanged."""
     from html import escape
     grid = builder.grid
     h, w = mask.shape
@@ -54,7 +54,7 @@ def save_coverage_svg(path, frame, builder, previous, mask):
         f'<text x="20" y="25" font-size="19">{title}</text>'
         '<text x="20" y="50" font-size="14">Cyan: sampled depth coverage | gray: SLAM occupancy</text>'
         '<text x="20" y="73" font-size="14">Orange: deleted | purple: retained | green: new</text>'
-        '<text x="20" y="91" font-size="12">XY projection is for display only; deletion uses 3D rays.</text>'
+        '<text x="20" y="91" font-size="12">Shared XY cell: remove old box; add only predictions intersecting cyan.</text>'
     )
     Path(path).write_text(f'<svg xmlns="http://www.w3.org/2000/svg" width="{max(700,w*scale+40)}" '
                          f'height="{h*scale+130}" style="background:white;font-family:sans-serif">'
@@ -74,9 +74,9 @@ def main(argv=None, *, model_config, robot_config, mapping_config, output_dir):
     parser.add_argument("--timeout-s", type=float, default=5.)
     parser.add_argument("--output", type=Path)
     parser.add_argument("--resume", type=Path, help="Resume a map saved by this task")
-    parser.add_argument("--coverage-stride", type=int, default=8)
+    parser.add_argument("--coverage-stride", type=int, default=None)
     args = parser.parse_args(argv)
-    if args.frames < 1 or not np.isfinite(args.timeout_s) or args.timeout_s <= 0 or args.coverage_stride < 1:
+    if args.frames < 1 or not np.isfinite(args.timeout_s) or args.timeout_s <= 0 or (args.coverage_stride is not None and args.coverage_stride < 1):
         parser.error("frames, timeout and coverage stride must be positive")
     output = args.output or args.resume or (Path(output_dir)/(
         "robot_map_"+datetime.now().strftime("%Y%m%d_%H%M%S_%f")+".json"))
@@ -84,6 +84,9 @@ def main(argv=None, *, model_config, robot_config, mapping_config, output_dir):
         parser.error("--output must end in .json")
     if output.exists() and (args.resume is None or output.resolve() != args.resume.resolve()):
         parser.error("Output already exists; explicitly use --resume or another --output")
+    mapping_config = dict(mapping_config)
+    if args.coverage_stride is not None:
+        mapping_config["pixel_stride"] = args.coverage_stride
     client = None
     try:
         builder = (DepthReplacementMap.load(args.resume, **mapping_config) if args.resume
@@ -101,9 +104,7 @@ def main(argv=None, *, model_config, robot_config, mapping_config, output_dir):
                 result = client.detect(frame)
                 previous = builder.objects
                 update = builder.integrate(frame, result)
-                mask = depth_coverage(frame, builder.grid, pixel_stride=args.coverage_stride,
-                                      min_depth_m=builder.options["min_depth_m"],
-                                      max_depth_m=builder.options["max_depth_m"])
+                mask = builder.coverage
                 builder.save(output)
                 save_coverage_svg(output.with_suffix(".svg"), frame, builder, previous, mask)
                 print(json.dumps(dict(output=str(output), frame_id=frame.frame_id,

@@ -107,7 +107,9 @@ def decode_rgbd_pose_message(parts, *, map_id, map_revision, topic="rgbd.pose"):
 def decode_explore_map(raw, *, map_id, map_revision, timestamp_ns):
     """Slamtec explore grid: 20-byte header, optional 16-byte wrapper, cell bytes.
 
-    Match the existing reader: 0 free, 127 unknown, other values occupied.
+    Slamtec signed int8 evidence: 0 unknown, positive free, negative occupied.
+    SDK display gray = signed value + 128; raw 127 is white/free, NOT unknown.
+    https://wiki.slamtec.com/pages/viewpage.action?pageId=1016631
     The raw map starts at lower-left; planner rows start at the top.
     """
     if len(raw) < 20:
@@ -121,10 +123,10 @@ def decode_explore_map(raw, *, map_id, map_revision, timestamp_ns):
             raise ValueError("Explore map wrapper length mismatch")
     elif len(raw) != 20+count:
         raise ValueError("Unsupported explore map length")
-    cells = np.frombuffer(raw[-count:],np.uint8).reshape(h,w)
+    cells = np.frombuffer(raw[-count:],np.int8).reshape(h,w)
     rows = np.full((h,w), ord("#"), dtype=np.uint8)
-    rows[cells==0] = ord(".")
-    rows[cells==127] = ord("?")
+    rows[cells > 0] = ord(".")
+    rows[cells == 0] = ord("?")
     return GridSnapshot(map_id,map_revision,timestamp_ns,"unix",float(resolution),
                         (float(x),float(y)),
                         tuple(row.tobytes().decode("ascii") for row in rows[::-1]),

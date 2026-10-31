@@ -2,7 +2,7 @@
 
 已接入 [Cubify Anything](https://github.com/apple-aiml-research/ml-cubifyanything) 的 **CuTR RGB-D** 模型。
 本地和 HTTP 客户端统一实现 `base.CuboidDetector`；`InstanceSegmenter` 保留为独立的 mask 接口。
-默认 `python falhv2/main.py` 仍执行原有离线锚点选择流程，不导入 torch、不连接相机、不加载模型。
+默认 `python falhv2/main.py` 启动持续采集与模型推理；离线锚点选择使用 `--task anchors`，该任务不加载模型。
 
 每个模型使用一个 Python 文件，与旧 `anchor-map/model_clients` 的组织方式一致：
 `cubify_anything.py` 包含 Local / Remote 客户端及该模型专用的协议、几何处理；
@@ -16,7 +16,7 @@
 只有 main.py 加载配置，再调用 `build_cubify_anything(model_config)`。客户端不 import 配置，也不自行选择配置文件。
 预览和服务启动器接收 main.py 传入的该字典；服务使用其中的本地参数，并默认使用 url 中的端口，始终本地加载模型。
 服务绑定地址仍由 --host 控制（默认 127.0.0.1），跨机访问可用 --host 0.0.0.0；--port 可临时覆盖监听端口。
-显示框数、点云采样等保留在工具内部，不另设配置块。默认 main.py 仍运行离线锚点选择。
+显示框数、点云采样等保留在工具内部，不另设配置块。默认 main.py 运行实时快、慢系统；离线选点使用 --task anchors。
 
 可通过 `python falhv2/main.py --config /path/to/robot.py --task cubify-preview` 选择另一份 Python 配置。
 配置文件可以只定义一个 CUBIFY 字典：未指定的字段沿用默认值，命令行参数再覆盖本次调用。
@@ -128,3 +128,7 @@ conda run -n depth python falhv2/main.py --task cubify-preview
 
 需要同步 RGB-D 发布器和底盘网络均正常；底盘定位超时会让发布器停止发布有效帧，
 工具会明确报错，不使用旧帧、合成帧或猜测位姿生成效果图。
+
+### Confidence and precision
+
+`CUBIFY["score_threshold"]` (default `0.25`) keeps scores greater than or equal to the threshold in both local and remote clients. `CUBIFY["fp16"]` (default `True`) enables CUDA FP16 autocast; set it to `False` for FP32. CPU always uses FP32. Outputs are converted to FP32 before NumPy conversion. The HTTP server uses its own FP16 setting, supplied through `main.py --task cubify-server`; the remote caller only controls the score threshold. Restart the process after changing configuration. Ground filtering is not enabled by these settings.

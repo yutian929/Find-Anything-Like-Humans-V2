@@ -48,7 +48,8 @@ CUBIFY = {
     "source_path": str(Path.home() / "map_test_new_v8_clean"),  # SDK root; None if installed
     "device": "auto",
     "max_side": 768,              # RGB longest side, 256..1024
-    "score_threshold": 0.25,
+    "score_threshold": 0.25,       # Keep confidence >= threshold (local and remote)
+    "fp16": True,                 # CUDA mixed precision; CPU stays FP32; remote uses server config
     "url": "http://127.0.0.1:8093",  # Remote model address, including port
     "timeout": 60,                # Remote HTTP timeout in seconds
 }
@@ -64,9 +65,17 @@ ROBOT_SOURCE = {
 
 # Replace old boxes visible in the current posed depth image; no tracking/fusion.
 MAP_UPDATE = {
-    "visible_fraction": 0.5,     # fraction of the full projected old box
-    "sample_grid": 32,          # samples per projected bounding-box axis
-    "depth_tolerance_m": 0.08,
+    "pixel_stride": 4,          # sampled depth rays; same XY mask for update and display
     "min_depth_m": 0.15,
     "max_depth_m": 8.0,
+    "min_object_height_m": 0.10,  # Reject boxes with map-Z top <= this; calibrated floor Z=0
+}
+
+
+LIVE_PAGE = ROOT / 'assets' / 'live_map.html'
+LIVE = {
+    "host": "127.0.0.1",
+    "port": 8090,
+    "timeout_s": 5.0,
+    "update_interval_s": 0.1,
 }

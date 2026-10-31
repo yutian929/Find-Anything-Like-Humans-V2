@@ -89,6 +89,20 @@ class BoxObservationTests(unittest.TestCase):
         result = ray_box_entry(origins, directions, np.zeros(3), np.ones(3))
         np.testing.assert_array_equal(result, [1, np.inf, 1, 0, np.inf])
 
+    def test_sensed_box_crossing_map_zero_keeps_original_geometry(self):
+        lower = [1.2734459032686547, -1.2951921417906564, -0.020442385809360808]
+        upper = [2.659343125097272, -0.5271377719463145, 0.13509738814116237]
+        target = box('sensed', lower, upper)
+        original = copy.deepcopy(target)
+        self.assertEqual(validate_objects([target]), [original])
+        observer = BoxObserver(PointCamera(camera_config()), [target])
+        rows = observer.evaluate(0, [[0., 0.]], [0.])
+        self.assertEqual(len(rows), 1)
+        self.assertEqual(target, original)
+        for bounds in [([0, 0, -.1], [1, 1, -.1]), ([1, 0, -.1], [0, 1, 1])]:
+            with self.assertRaises(ValueError):
+                validate_objects([box('invalid', *bounds)])
+
     def test_invalid_geometry_mixed_maps_and_thresholds(self):
         for field in ('min', 'max'):
             bad = copy.deepcopy(self.target)
@@ -164,7 +178,7 @@ class BoxObservationTests(unittest.TestCase):
                 (folder/f'{name}.json').write_text(json.dumps(value))
             before = (folder/'map.json').read_bytes()
             output = folder/'plan.json'
-            run = subprocess.run([sys.executable, '-B', str(root/'main.py'), '--scene', str(folder/'map.json'),
+            run = subprocess.run([sys.executable, '-B', str(root/'main.py'), '--task', 'anchors', '--scene', str(folder/'map.json'),
                 '--robot', str(folder/'robot.json'), '--camera', str(folder/'camera.json'), '--output', str(output),
                 '--save-supports'], text=True, capture_output=True)
             self.assertEqual(run.returncode, 0, run.stderr)

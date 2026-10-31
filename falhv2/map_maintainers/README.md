@@ -7,22 +7,27 @@
 - `depth_replace.py`：检查旧 AABB 的深度可见性，替换、快照、原子存储和规划导出。
 - `../tools/build_map.py`：采集、模型调用和诊断 SVG；仅由 main.py 注入配置。
 
-## 更新规则
+## 更新规则（二维栅格相交）
 
-1. 将旧框八角点投影到当前 RGB 图像，采样完整投影包围矩形。
-2. 将像素射线变换到地图系，与原地图 AABB 求交；未击中旧框的样本不进入分母。
-3. 有效画面内深度满足 `旧框入射深度 <= 实测深度 + 容差`，计为可见。
-   射线参数是光轴 Z；画面外、无效/超范围深度、被更近表面遮挡均不提供可见证据。
-4. 可见样本 / 完整投影击中样本达到门槛时，删除整个旧框。其余旧框保留。
-5. 加入全部本帧预测框，分配新的观测 ID，不匹配旧物体。
+1. 使用采集时刻相机位姿，把有效深度像素对应的射线段投到地图 XY 平面。
+2. 射线从相机到实测表面停止，栅格化后取并集；不取凸包，不跨无效深度补洞。
+3. 将旧地图 AABB 的 XY 范围投到同一栅格，只要共享至少一个栅格，就删除整个旧记录。
+4. 本帧新 AABB 也必须与同一覆盖区域相交才加入，避免“能加入但永远删不掉”的累积。
 
-默认门槛 0.5、32×32 采样、0.08m 深度容差、有效深度 0.15–8m；
-均由 main.py 加载的 MAP_UPDATE 字典控制。这是待现场调整的初始参数。
-成功推理的空结果仍会清除可见旧框；推理失败、全无效深度、错帧、旧时间戳和坐标版本冲突不会清除旧框。
-跨越相机近裁剪面的旧框保守保留。小框/薄遮挡的采样误差、深度边缘误差和定位误差尚需现场验证。
+三维 AABB 原样保留给锚点规划；仅维护判断降为二维。不做关联、融合或跨帧去重。
+这会忽略高度：射线从物体上方或下方经过，也可能更新同一 XY 区域的框；这是本版本明确采用的近似。
+被高墙完全挡住的射线会停止；如有射线越过墙顶，二维覆盖仍可能延伸到墙后。
 
-二维诊断通过采样深度射线段栅格化生成，不取凸包、不填补无效深度；允许存在采样空隙。
-该图会丢失高度信息，只用于显示，不参与删除判断，不修改底盘占据栅格。
+MAP_UPDATE 只有 pixel_stride（默认每 4 像素采一条射线）、min_depth_m（0.15）、max_depth_m（8）。
+射线在 XY 中按不大于半个栅格间距采样，保留采样产生的空隙，不使用假设扇形。
+原 50% 可见比例、32×32 旧框投影采样和深度容差已移除。
+
+更新掩膜每帧只计算一次，删除、加入、网页和 SVG 共用它，青色区域就是实际更新范围。
+底盘占据栅格不会被修改。无有效采样射线时不删除、不新增；全无效帧和推理失败会报错，保留上一份地图。
+成功的空预测仍会删除与当前覆盖区域相交的旧框。
+
+存储策略升级为 schema_version=2 / xy_depth_replacement；拒绝按新策略直接恢复旧三维规则的累积地图。
+切换本版本后重启 main.py，默认创建新会话；旧输出文件保留，不自动修改。
 
 ## 运行
 
@@ -39,7 +44,7 @@ conda run -n depth python falhv2/main.py --task build-map \
   --frames 10 --resume falhv2/outputs/robot_map.json
 
 # 使用生成的地图运行现有锚点选择流程
-python falhv2/main.py --scene falhv2/outputs/robot_map.json
+python falhv2/main.py --task anchors --scene falhv2/outputs/robot_map.json
 ```
 
 示例 room-a / slam-session-1 必须替换为实际会话标识。
@@ -48,7 +53,7 @@ ROBOT_SOURCE 字典可配置 map_id、map_revision、endpoint 和 chassis_url；
 只有 main.py 加载配置；可添加 `--config /path/to/robot.py` 选择另一份配置。
 
 默认只处理一帧；--frames 为有限帧数，不自动移动底盘。模型加载一次，每次更新重新获取栅格和新鲜同步 RGB-D。
-已有输出文件必须显式 --resume，避免无意覆盖。默认 main.py 仍只执行原有离线锚点选择。
+已有输出文件必须显式 --resume，避免无意覆盖。默认 main.py 现在启动持续更新与按指令重规划；--task anchors 执行离线选点。
 
 ## 输出与限制
 
@@ -61,6 +66,8 @@ ROBOT_SOURCE 字典可配置 map_id、map_revision、endpoint 和 chassis_url；
 地图切换、定位重置或坐标修正后，必须使用新的会话版本和输出文件；当前实现拒绝混用已声明的不同版本，不做历史重投影。
 同坐标系下栅格范围/原点随探索变化可以正常更新。
 
-已覆盖墙遮挡、部分入镜、部分遮挡、深度空洞、光轴深度、不同高度、坐标变换、
-空预测、重复/乱序帧、版本冲突、保存恢复及两帧 CLI 更新。测试使用合成几何与模拟采集/推理；
-不代表已经完成实机多帧维护验证。
+已覆盖墙遮挡、一个栅格相交、不同高度、无效深度、坐标/时序错误、空预测、静止重复帧与预测抖动不累积、保存恢复、旧策略拒绝，以及两帧 CLI 更新。
+
+### Simple ground rejection
+
+`MAP_UPDATE["min_object_height_m"]` defaults to `0.10`. The map frame must have calibrated ground at Z=0 and Z pointing up. New cuboids whose highest map-frame corner is at or below this threshold are excluded. This tests height above ground, not box thickness or bottom height. Small low objects may also be rejected; thick floor predictions may remain. Original depth coverage and old-box XY deletion are unchanged. Update diagnostics include `ground_filtered_indices`; these also count as skipped predictions. The threshold is saved in map state. Restart live sessions after configuration changes.

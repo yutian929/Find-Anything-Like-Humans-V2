@@ -92,7 +92,7 @@ class AnchorSelectorTests(unittest.TestCase):
             for name, data in [('scene', scene), ('robot', self.robot()), ('camera', config())]:
                 (folder/f'{name}.json').write_text(json.dumps(data))
             output = folder/'anchor_plan.json'
-            run = subprocess.run([sys.executable, '-B', str(ROOT/'main.py'),
+            run = subprocess.run([sys.executable, '-B', str(ROOT/'main.py'), '--task', 'anchors',
                 '--scene', str(folder/'scene.json'), '--robot', str(folder/'robot.json'),
                 '--camera', str(folder/'camera.json'), '--output', str(output)],
                 capture_output=True, text=True)

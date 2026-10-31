@@ -81,7 +81,7 @@ class ConfigTests(unittest.TestCase):
             with patch.multiple(settings, **values, YAW_STEP_DEG=90,
                                 SELECTION_TIME_LIMIT_S=5, AUDIT_SAMPLE_GRID=64, MAX_AUDIT_RETRIES=0):
                 for args, step, budget in [([], 90, 5), (['--yaw-step-deg', '45', '--selection-time-limit-s', '10'], 45, 10)]:
-                    with patch.object(sys, 'argv', ['main.py', *args]), contextlib.redirect_stdout(io.StringIO()):
+                    with patch.object(sys, 'argv', ['main.py', '--task', 'anchors', *args]), contextlib.redirect_stdout(io.StringIO()):
                         self.assertEqual(entrypoint.main(), 0)
                     result = entrypoint.read_input(values['ANCHOR_PLAN_PATH'])
                     self.assertEqual(result['configuration']['yaw_step_deg'], step)
@@ -118,7 +118,7 @@ class ConfigTests(unittest.TestCase):
                     with patch.object(sys, 'argv', ['regions_extractor.py']), contextlib.redirect_stdout(io.StringIO()):
                         self.assertEqual(entrypoint.main(["--task", "safe-regions"]), 0)
                     (outputs/'map.json').write_text('invalid old output')
-                    with patch.object(sys, 'argv', ['main.py']), contextlib.redirect_stdout(io.StringIO()):
+                    with patch.object(sys, 'argv', ['main.py', '--task', 'anchors']), contextlib.redirect_stdout(io.StringIO()):
                         self.assertEqual(entrypoint.main(), 0)
                     result = entrypoint.read_input(outputs/'anchor_plan.json')
                     self.assertEqual(result['scene_name'], 'persistent input')
@@ -134,13 +134,13 @@ class ConfigTests(unittest.TestCase):
             actual_map = values['MAP_PATH']
             values['MAP_PATH'] = root/'missing.json'
             with patch.multiple(settings, **values):
-                with patch.object(sys, 'argv', ['main.py']), contextlib.redirect_stderr(io.StringIO()) as error:
+                with patch.object(sys, 'argv', ['main.py', '--task', 'anchors']), contextlib.redirect_stderr(io.StringIO()) as error:
                     with self.assertRaises(SystemExit) as failure:
                         entrypoint.main()
                     self.assertEqual(failure.exception.code, 2)
                     self.assertIn('--config', error.getvalue())
                 self.assertFalse(values['OUTPUT_DIR'].exists())
-                with patch.object(sys, 'argv', ['main.py', '--scene', str(actual_map)]), contextlib.redirect_stdout(io.StringIO()):
+                with patch.object(sys, 'argv', ['main.py', '--task', 'anchors', '--scene', str(actual_map)]), contextlib.redirect_stdout(io.StringIO()):
                     self.assertEqual(entrypoint.main(), 0)
 
 
@@ -199,7 +199,7 @@ class ConfigBoundaryTests(unittest.TestCase):
             path.write_text("\n".join(f"{key} = {str(value)!r}" for key,value in values.items())
                             +"\nYAW_STEP_DEG = 90\nAUDIT_SAMPLE_GRID = 64\nMAX_AUDIT_RETRIES = 0\n")
             with contextlib.redirect_stdout(io.StringIO()):
-                self.assertEqual(entrypoint.main(["--config",str(path)]),0)
+                self.assertEqual(entrypoint.main(["--task","anchors","--config",str(path)]),0)
             result=entrypoint.read_input(values["ANCHOR_PLAN_PATH"])
             self.assertEqual(result["configuration"]["yaw_step_deg"],90)
             self.assertEqual(result["configuration"]["audit"]["sample_grid"],64)

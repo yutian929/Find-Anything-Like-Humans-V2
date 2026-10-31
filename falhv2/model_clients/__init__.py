@@ -1,6 +1,6 @@
 """Model clients. Optional inference dependencies are imported only on demand."""
 
-_LOCAL_KEYS = {"path", "source_path", "device", "max_side", "score_threshold"}
+_LOCAL_KEYS = {"path", "source_path", "device", "fp16", "max_side", "score_threshold"}
 _REMOTE_KEYS = {"url", "timeout", "score_threshold"}
 
 

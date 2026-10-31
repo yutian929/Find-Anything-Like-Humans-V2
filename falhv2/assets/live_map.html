@@ -1,0 +1,116 @@
+<!doctype html>
+<html lang="zh-CN">
+<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>实时物体地图 · FALH V2</title>
+<style>
+*{box-sizing:border-box}body{margin:0;background:#f2f5f8;color:#1c2d3e;font:15px/1.6 system-ui,"Microsoft YaHei",sans-serif}
+header{padding:22px 30px;background:#142b40;color:white;display:flex;justify-content:space-between;align-items:center;gap:20px}
+h1{font-size:23px;margin:0}header p{margin:2px 0 0;color:#bad0df;font-size:13px}
+button{background:#157b65;border:0;border-radius:8px;color:white;padding:12px 22px;font:inherit;font-weight:600;cursor:pointer}button:disabled{opacity:.45;cursor:wait}
+main{padding:20px;display:grid;grid-template-columns:minmax(0,1.65fr) minmax(320px,1fr);gap:18px;max-width:1800px;margin:auto}
+section{background:white;border:1px solid #dce4eb;border-radius:12px;overflow:hidden}h2{font-size:16px;margin:0;padding:15px 18px;border-bottom:1px solid #edf0f4}
+#map{display:block;width:100%;height:65vh;min-height:400px;touch-action:none;cursor:grab}
+.legend,.foot{padding:10px 18px;font-size:12px;color:#536879}.legend span{display:inline-block;margin-right:14px}
+.dot{display:inline-block;width:10px;height:10px;margin-right:5px;border-radius:2px}
+#photo{width:100%;display:none;background:#102235}#placeholder{padding:80px 20px;text-align:center;color:#7c8c99}
+aside{display:flex;flex-direction:column;gap:18px}.info{padding:14px 18px}.line{display:flex;justify-content:space-between;gap:12px;margin:6px 0}
+.value{font-variant-numeric:tabular-nums;font-weight:600;text-align:right}.muted{font-size:12px;color:#6f8190}
+#notice{padding:12px 20px;background:#e5f2ed;color:#16654f;min-height:48px}#error{color:#b33c38;white-space:pre-wrap;overflow-wrap:anywhere}
+a{color:#126eaa}#planLink{display:none}#slowError{color:#b33c38}#reset{padding:4px 10px;font-size:12px;background:#637c91;float:right}
+@media(max-width:900px){main{grid-template-columns:1fr}header{padding:18px}#map{height:55vh}}
+</style>
+<header><div><h1>实时物体地图</h1><p>快系统持续更新 · 用户触发锚点重规划</p></div><button id="replan" disabled>重规划锚点</button></header>
+<div id="notice">正在连接系统，等待第一帧有效地图……</div>
+<main>
+<section><h2>栅格地图与无类别物体 <button id="reset">复位视角</button></h2>
+<canvas id="map"></canvas>
+<div class="legend"><span><i class="dot" style="background:#fafcfd;border:1px solid #b5c3cf"></i>空闲</span><span><i class="dot" style="background:#dde5eb"></i>未知</span><span><i class="dot" style="background:#4a5866"></i>障碍</span><span><i class="dot" style="background:#65cbd2"></i>深度覆盖</span><span><i class="dot" style="background:#1b976b"></i>本帧新框</span><span><i class="dot" style="background:#9365be"></i>保留旧框</span><span><i class="dot" style="background:#ea9426"></i>最近一次锚点</span></div>
+<div class="foot">滚轮缩放 · 拖动平移。青色区域即更新范围：与旧框投影共享栅格就删除；新框也须与其相交。</div>
+</section>
+<aside>
+<section><h2>当前 RGB 与 Cubify 预测</h2><div id="placeholder">等待相机与模型……</div><img id="photo" alt="当前 RGB 与 Cubify 三维框投影"></section>
+<section><h2>快系统</h2><div class="info">
+<div class="line"><span>运行状态</span><span id="fast" class="value">启动中</span></div>
+<div class="line"><span>地图版本 / 帧</span><span id="revision" class="value">—</span></div>
+<div class="line"><span>物体数</span><span id="objects" class="value">—</span></div>
+<div class="line"><span>本帧新增 / 删除</span><span id="changes" class="value">—</span></div>
+<div class="line"><span>更新时间</span><span id="age" class="value">—</span></div>
+<div class="line"><span>模型预测 / 未入图</span><span id="predictions" class="value">—</span></div><div id="error"></div><div id="session" class="muted"></div>
+</div></section>
+<section><h2>慢系统 · 锚点重规划</h2><div class="info">
+<div class="line"><span>运行状态</span><span id="slow" class="value">等待指令</span></div>
+<div id="planText">点击上方按钮，或在终端输入 replan / 重规划。</div>
+<div id="slowError"></div><a id="planLink" target="_blank" rel="noopener">查看本次完整规划结果 ↗</a>
+<p class="muted">重规划使用指令到达时的固定地图快照；快系统继续更新。橙色锚点不会随新帧自动重算。</p>
+</div></section>
+</aside>
+</main>
+<script>
+const $=id=>document.getElementById(id);
+const canvas=$('map'),ctx=canvas.getContext('2d');
+let current=null,zoom=1,panX=0,panY=0,drag=null,connected=false,lastRevision=null,back=null;
+const labels={starting:'启动中',running:'运行中',error:'异常',stopped:'已停止',idle:'等待指令',queued:'已排队',complete:'已完成'};
+function text(id,value){$(id).textContent=value}
+function renderMap(){
+ const r=canvas.getBoundingClientRect();
+ if(canvas.width!==Math.round(r.width)||canvas.height!==Math.round(r.height)){canvas.width=Math.round(r.width);canvas.height=Math.round(r.height)}
+ ctx.clearRect(0,0,canvas.width,canvas.height);ctx.fillStyle='#fafcfd';ctx.fillRect(0,0,canvas.width,canvas.height);
+ const v=current?.view;if(!v){ctx.fillStyle='#8495a5';ctx.font='16px system-ui';ctx.fillText('等待第一帧有效地图',30,45);return}
+ const g=v.grid,w=g.rows[0].length,h=g.rows.length;
+ const scale=Math.min((canvas.width-40)/w,(canvas.height-40)/h)*zoom;
+ const tx=(canvas.width-w*scale)/2+panX,ty=(canvas.height-h*scale)/2+panY;
+ if(lastRevision!==v.revision){
+  back=document.createElement('canvas');back.width=w;back.height=h;
+  const b=back.getContext('2d'),im=b.createImageData(w,h);
+  for(let y=0;y<h;y++)for(let x=0;x<w;x++){const p=(y*w+x)*4,c=g.rows[y][x],color=c==='#'?[74,88,102]:c==='?'?[221,229,235]:[250,252,253];im.data.set([...color,255],p)}
+  b.putImageData(im,0,0);b.fillStyle='rgba(62,188,201,.35)';
+  for(const [y,a,z] of v.coverage)b.fillRect(a,y,z-a,1);
+  lastRevision=v.revision;
+ }
+ ctx.save();ctx.translate(tx,ty);ctx.scale(scale,scale);ctx.imageSmoothingEnabled=false;ctx.drawImage(back,0,0);
+ const point=p=>[(p[0]-g.origin[0])/g.resolution,h-(p[1]-g.origin[1])/g.resolution];
+ const added=new Set(v.added_ids);
+ ctx.lineWidth=2/scale;
+ for(const o of v.objects){const a=point([o.aabb.min[0],o.aabb.max[1]]),b=point([o.aabb.max[0],o.aabb.min[1]]);ctx.strokeStyle=added.has(o.id)?'#1b976b':'#9365be';ctx.strokeRect(a[0],a[1],b[0]-a[0],b[1]-a[1])}
+ const result=current.slow.last_result;
+ if(result&&result.source_map.map_id===v.map_id&&result.source_map.map_revision===v.map_revision){
+  ctx.fillStyle='#ea9426';ctx.strokeStyle='#fff';ctx.font=(13/scale)+'px system-ui';
+  for(const [i,a] of result.anchors.entries()){const p=point(a.position);ctx.beginPath();ctx.arc(...p,7/scale,0,Math.PI*2);ctx.fill();ctx.stroke();ctx.fillText(String(i+1),p[0]+10/scale,p[1]-8/scale)}
+ }
+ const robot=point(v.robot_position),cam=point(v.camera_position),d=v.camera_forward;
+ ctx.fillStyle='#173e62';ctx.beginPath();ctx.arc(...robot,5/scale,0,Math.PI*2);ctx.fill();
+ const n=Math.hypot(...d)||1;ctx.strokeStyle='#173e62';ctx.beginPath();ctx.moveTo(...cam);ctx.lineTo(cam[0]+d[0]/n*22/scale,cam[1]-d[1]/n*22/scale);ctx.stroke();ctx.restore();
+}
+function refresh(){
+ const s=current;if(!s)return;const v=s.view;
+ text('fast',labels[s.fast.status]||s.fast.status);text('slow',labels[s.slow.status]||s.slow.status);
+ text('error',s.fast.error||'');text('slowError',s.slow.error||'');
+ $('replan').disabled=!connected||!v||s.fast.status!=='running'||['queued','running'].includes(s.slow.status);
+ if(v){text('revision',v.revision+' / '+v.frame_id);text('objects',v.objects.length);text('changes',v.added_ids.length+' / '+v.removed_ids.length);text('session',v.map_id);text('predictions',(v.predictions??'—')+' / '+(v.skipped_predictions??'—'));
+ $('photo').src=v.rgb;$('photo').style.display='block';$('placeholder').style.display='none'}
+ const result=s.slow.last_result;
+ if(result){text('planText','基于地图版本 '+result.source_map.revision+'：'+result.anchor_count+' 个锚点，'+result.photo_count+' 张照片。'+(v&&v.revision!==result.source_map.revision?'当前地图已更新。':''));
+ $('planLink').href=result.url;$('planLink').style.display='inline'}
+ text('notice',s.fast.status==='error'?'地图更新异常，画面保留上一份成功快照；恢复后继续更新。':!v?'正在加载模型或等待第一帧有效地图……':'地图持续更新中。需要重新选择锚点时，点击“重规划锚点”。');
+ renderMap();
+}
+async function poll(){
+ try{const r=await fetch('/api/state',{cache:'no-store'});if(!r.ok)throw Error('HTTP '+r.status);current=await r.json();connected=true;refresh()}
+ catch(e){connected=false;$('replan').disabled=true;text('notice','连接中断，显示的是最后一次收到的画面：'+e.message)}
+ setTimeout(poll,750);
+}
+$('replan').onclick=async()=>{
+ $('replan').disabled=true;
+ try{const r=await fetch('/api/replan',{method:'POST'}),v=await r.json();text('notice',v.message||v.error)}
+ catch(e){text('notice','指令发送失败：'+e.message)}
+};
+$('reset').onclick=()=>{zoom=1;panX=panY=0;renderMap()};
+canvas.addEventListener('wheel',e=>{e.preventDefault();zoom=Math.max(.3,Math.min(20,zoom*Math.exp(-e.deltaY*.001)));renderMap()},{passive:false});
+canvas.onpointerdown=e=>{drag=[e.clientX,e.clientY,panX,panY];canvas.setPointerCapture(e.pointerId)};
+canvas.onpointermove=e=>{if(drag){panX=drag[2]+e.clientX-drag[0];panY=drag[3]+e.clientY-drag[1];renderMap()}};
+canvas.onpointerup=canvas.onpointercancel=()=>{drag=null};
+window.addEventListener('resize',renderMap);
+setInterval(()=>{if(current?.fast.updated_at)text('age',Math.max(0,(Date.now()/1000-current.fast.updated_at)).toFixed(1)+' 秒前')},500);
+poll();
+</script>
+</html>

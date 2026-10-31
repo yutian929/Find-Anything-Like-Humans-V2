@@ -1,6 +1,6 @@
-"""统一离线规划入口：安全区域 → 观察候选 → 锚点优化 → 复核 → 导出。
+"""统一入口：持续更新地图，按用户指令重规划锚点。
 
-运行 python -B falhv2/main.py 即可生成安全区域、锚点计划和离线可视化。
+运行 python -B falhv2/main.py 启动实时系统；--task anchors 保留离线选点。
 地图编辑与真机相机标定是独立的输入准备步骤。
 """
 from __future__ import annotations
@@ -73,6 +73,8 @@ def planning_audit(config=None):
 
 def run_task(task, argv, config):
     """Pass only the parameters a tool needs; tools never load project config."""
+    if task == 'live':
+        return run_live(argv, config)
     if task == 'cubify-preview':
         from falhv2.tools.cubify_preview import main as run
         return run(argv, model_config=dict(config.CUBIFY), output_dir=config.OUTPUT_DIR)
@@ -174,12 +176,315 @@ def plan(scene, robot_config, camera_config, *, yaw_step_deg=None, selection_tim
     return result, regions, stations, candidates
 
 
+def write_json_atomic(path, payload):
+    import os
+    import tempfile
+    path = Path(path)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    fd, temporary = tempfile.mkstemp(prefix=path.name+".", dir=path.parent)
+    try:
+        with os.fdopen(fd, 'w', encoding='utf-8') as stream:
+            json.dump(payload, stream, ensure_ascii=False, allow_nan=False)
+            stream.flush()
+            os.fsync(stream.fileno())
+        os.replace(temporary, path)
+    finally:
+        if os.path.exists(temporary):
+            os.unlink(temporary)
+
+
+class LiveSystem:
+    """Fast map updates and serialized slow planning, sharing immutable snapshots."""
+
+    def __init__(self, config, output_dir, robot_options, *, timeout_s=5., update_interval_s=.2):
+        import threading
+        import queue
+        self.config = config
+        self.output_dir = Path(output_dir)
+        self.robot_options = dict(robot_options)
+        self.timeout_s = timeout_s
+        self.update_interval_s = update_interval_s
+        self.stop = threading.Event()
+        self.lock = threading.Lock()
+        self.requests = queue.Queue()
+        self.threads = []
+        self.serial = 0
+        self.scene = None
+        self.view = None
+        self.fast = dict(status='starting', error=None, updated_at=None)
+        self.slow = dict(status='idle', error=None, source_revision=None, last_result=None)
+
+    def start(self):
+        import threading
+        self.output_dir.mkdir(parents=True, exist_ok=True)
+        for name, target in [('map-updates', self._fast_loop), ('anchor-replanning', self._slow_loop)]:
+            thread = threading.Thread(name=name, target=target)
+            self.threads.append(thread)
+            thread.start()
+
+    def close(self):
+        self.stop.set()
+        for thread in self.threads:
+            thread.join()
+
+    def state(self):
+        import copy
+        with self.lock:
+            return copy.deepcopy(dict(fast=self.fast, slow=self.slow, view=self.view))
+
+    def request_replan(self):
+        import copy
+        with self.lock:
+            if self.stop.is_set():
+                return False, '系统正在退出'
+            if self.scene is None or self.fast['status'] != 'running':
+                return False, '还没有可用于重规划的最新地图，请等待采集恢复'
+            if self.slow['status'] in ('queued', 'running'):
+                return False, '已有重规划正在执行，请等待完成'
+            self.serial += 1
+            scene = copy.deepcopy(self.scene)
+            revision = scene['mapping']['revision']
+            self.slow.update(status='queued', error=None, source_revision=revision,
+                             request_id=self.serial)
+            self.requests.put((self.serial, scene))
+            return True, f'已冻结地图版本 {revision}，开始重规划'
+
+    def _fast_loop(self):
+        import time
+        import base64
+        client = None
+        try:
+            import cv2
+            import numpy as np
+            from falhv2.model_clients import build_cubify_anything
+            from falhv2.robot_adapters.anchor_map import AnchorMapRobot
+            from falhv2.map_maintainers.depth_replace import DepthReplacementMap
+            from falhv2.tools.cubify_preview import draw_cuboid, color
+            builder = DepthReplacementMap(**self.config.MAP_UPDATE)
+            client = build_cubify_anything(dict(self.config.CUBIFY))
+            with AnchorMapRobot(**self.robot_options) as robot:
+                while not self.stop.is_set():
+                    started = time.monotonic()
+                    try:
+                        builder.set_grid(robot.grid_snapshot(timeout_s=self.timeout_s))
+                        frame = robot.capture(timeout_s=self.timeout_s)
+                        result = client.detect(frame)
+                        update = builder.integrate(frame, result)
+                        mask = builder.coverage
+                        spans = []
+                        for row, values in enumerate(mask):
+                            edges = np.flatnonzero(np.diff(np.r_[False, values, False]))
+                            spans.extend([row, int(a), int(b)] for a, b in edges.reshape(-1, 2))
+                        rgb = cv2.cvtColor(frame.rgb, cv2.COLOR_RGB2BGR)
+                        for index, box in enumerate(result.cuboids):
+                            draw_cuboid(rgb, box.corners_camera_m, frame.intrinsics, color(index),
+                                        f'#{index+1} {box.confidence:.2f}')
+                        ok, image = cv2.imencode('.jpg', rgb, [cv2.IMWRITE_JPEG_QUALITY, 75])
+                        if not ok:
+                            raise ValueError('RGB preview encoding failed')
+                        scene = builder.to_scene()
+                        builder.save(self.output_dir/'map.json')
+                        pose = frame.T_map_base if frame.T_map_base is not None else frame.T_map_camera
+                        view = dict(grid=scene['grid'], objects=scene['objects'], coverage=spans,
+                                    revision=builder.revision, frame_id=frame.frame_id,
+                                    timestamp_ns=frame.timestamp_ns,
+                                    map_id=builder.grid.map_id, map_revision=builder.grid.map_revision,
+                                    robot_position=pose[:2, 3].tolist(),
+                                    camera_position=frame.T_map_camera[:2, 3].tolist(),
+                                    camera_forward=frame.T_map_camera[:2, 2].tolist(),
+                                    added_ids=update['added_ids'], removed_ids=update['removed_ids'],
+                                    predictions=update['predictions'],
+                                    skipped_predictions=len(update['skipped_detection_indices']),
+                                    rgb='data:image/jpeg;base64,'+base64.b64encode(image).decode())
+                        with self.lock:
+                            self.scene, self.view = scene, view
+                            self.fast.update(status='running', error=None, updated_at=time.time(),
+                                             processing_s=time.monotonic()-started)
+                    except Exception as exc:
+                        LOGGER.warning('地图更新失败，保留上一份成功快照：%s', exc)
+                        with self.lock:
+                            self.fast.update(status='error', error=str(exc))
+                        if self.stop.wait(1.):
+                            break
+                    self.stop.wait(self.update_interval_s)
+        except Exception as exc:
+            LOGGER.exception('快系统启动失败')
+            with self.lock:
+                self.fast.update(status='error', error=str(exc))
+        finally:
+            if client is not None:
+                client.close()
+            with self.lock:
+                if self.fast['status'] != 'error':
+                    self.fast['status'] = 'stopped'
+
+    def _plan_snapshot(self, request_id, scene):
+        folder = self.output_dir/'plans'/f'{request_id:04d}'
+        write_json_atomic(folder/'scene.json', scene)
+        robot = read_input(self.config.ROBOT_PATH)
+        camera = read_input(self.config.CAMERA_PATH)
+        result, regions, stations, candidates = plan(
+            scene, robot, camera, project_config=self.config)
+        source = dict(map_id=scene['mapping']['grid_metadata']['map_id'],
+                      map_revision=scene['mapping']['grid_metadata']['map_revision'],
+                      revision=scene['mapping']['revision'],
+                      frame_id=scene['mapping']['last_frame_id'],
+                      timestamp_ns=scene['mapping']['last_timestamp_ns'])
+        result['source_map'] = source
+        export_plan(folder/'anchor_plan.json', scene, camera, result, regions, stations,
+                    candidates, template_path=self.config.ANCHOR_VIEWER_TEMPLATE)
+        export_safe_regions(scene, regions, folder/'safe_regions.json', folder/'safe_regions.svg')
+        return dict(request_id=request_id, source_map=source, status=result['status'],
+                    anchor_count=result['anchor_count'], photo_count=result['photo_count'],
+                    anchors=result['anchors'], coverage_fraction=result['coverage_fraction'],
+                    url=f'/plans/{request_id:04d}/anchor_plan.html')
+
+    def _slow_loop(self):
+        import queue
+        while not self.stop.is_set():
+            try:
+                request_id, scene = self.requests.get(timeout=.2)
+            except queue.Empty:
+                continue
+            with self.lock:
+                self.slow.update(status='running')
+            try:
+                result = self._plan_snapshot(request_id, scene)
+                with self.lock:
+                    self.slow.update(status='complete', error=None, last_result=result)
+                LOGGER.info('重规划完成：地图版本 %s，%s 个锚点，%s 张照片',
+                            result['source_map']['revision'], result['anchor_count'],
+                            result['photo_count'])
+            except Exception as exc:
+                LOGGER.exception('重规划失败；快系统继续运行')
+                with self.lock:
+                    self.slow.update(status='error', error=str(exc))
+
+
+def make_live_server(runtime, host, port, page_path):
+    from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+    from urllib.parse import unquote, urlsplit
+    import mimetypes
+
+    class Handler(BaseHTTPRequestHandler):
+        def log_message(self, *_):
+            pass
+
+        def send(self, code, content, content_type):
+            self.send_response(code)
+            self.send_header('Content-Type', content_type)
+            self.send_header('Content-Length', str(len(content)))
+            self.send_header('Cache-Control', 'no-store')
+            self.end_headers()
+            self.wfile.write(content)
+
+        def json(self, code, value):
+            self.send(code, json.dumps(value, ensure_ascii=False, allow_nan=False).encode(),
+                      'application/json; charset=utf-8')
+
+        def do_GET(self):
+            path = unquote(urlsplit(self.path).path)
+            if path == '/api/state':
+                return self.json(200, runtime.state())
+            if path == '/':
+                return self.send(200, Path(page_path).read_bytes(), 'text/html; charset=utf-8')
+            if path.startswith('/plans/'):
+                root = (runtime.output_dir/'plans').resolve()
+                target = (runtime.output_dir/path.lstrip('/')).resolve()
+                if root in target.parents and target.is_file():
+                    mime = mimetypes.guess_type(str(target))[0] or 'application/octet-stream'
+                    return self.send(200, target.read_bytes(), mime)
+            self.send(404, b'Not found', 'text/plain')
+
+        def do_POST(self):
+            # Same-origin browser commands only. CLI input remains local.
+            origin = self.headers.get('Origin')
+            if origin and origin != 'http://'+self.headers.get('Host', ''):
+                return self.json(403, dict(error='Origin mismatch'))
+            if urlsplit(self.path).path != '/api/replan':
+                return self.json(404, dict(error='Unknown command'))
+            accepted, message = runtime.request_replan()
+            self.json(202 if accepted else 409, dict(accepted=accepted, message=message))
+
+    server = ThreadingHTTPServer((host, port), Handler)
+    server.daemon_threads = True
+    return server
+
+
+def run_live(argv, config):
+    import threading
+    import uuid
+    from datetime import datetime
+    options = config.LIVE
+    parser = argparse.ArgumentParser(description='快系统持续更新地图；输入 replan / 重规划 触发锚点选择')
+    parser.add_argument('--host', default=options['host'])
+    parser.add_argument('--port', type=int, default=options['port'])
+    parser.add_argument('--map-id', default=config.ROBOT_SOURCE.get('map_id'))
+    parser.add_argument('--map-revision', default=config.ROBOT_SOURCE.get('map_revision'))
+    parser.add_argument('--endpoint', default=config.ROBOT_SOURCE['endpoint'])
+    parser.add_argument('--chassis-url', default=config.ROBOT_SOURCE['chassis_url'])
+    parser.add_argument('--output-dir', type=Path)
+    args = parser.parse_args(argv)
+    if not 0 <= args.port <= 65535:
+        parser.error('port must be between 0 and 65535')
+    if (not math.isfinite(options['timeout_s']) or options['timeout_s'] <= 0
+            or not math.isfinite(options['update_interval_s']) or options['update_interval_s'] < 0
+):
+        parser.error('Invalid LIVE timing')
+    # Fresh application session labels; not a claim that the vendor provides SLAM revisions.
+    session = datetime.now().strftime('%Y%m%d_%H%M%S')+'_'+uuid.uuid4().hex[:8]
+    robot_options = dict(map_id=args.map_id or 'live-'+session,
+                         map_revision=args.map_revision or 'session-'+session,
+                         endpoint=args.endpoint, chassis_url=args.chassis_url)
+    output = args.output_dir or config.OUTPUT_DIR/('live_'+session)
+    if output.exists() and any(output.iterdir()):
+        parser.error('Live output directory must be new or empty')
+    runtime = LiveSystem(config, output, robot_options, timeout_s=options['timeout_s'],
+                         update_interval_s=options['update_interval_s'])
+    server = make_live_server(runtime, args.host, args.port, config.LIVE_PAGE)
+    browser_thread = threading.Thread(target=server.serve_forever, name='live-http', daemon=True)
+
+    def console():
+        while not runtime.stop.is_set():
+            try:
+                command = input().strip().lower()
+            except EOFError:
+                return  # Browser remains usable with redirected or closed stdin.
+            if command in ('replan', '重规划', '重新规划'):
+                print(runtime.request_replan()[1], flush=True)
+            elif command in ('quit', 'exit', '退出'):
+                runtime.stop.set()
+            elif command:
+                print('可用指令：replan / 重规划；quit / 退出。', flush=True)
+
+    try:
+        browser_thread.start()
+        runtime.start()
+        threading.Thread(target=console, name='live-console', daemon=True).start()
+        address = '127.0.0.1' if args.host in ('0.0.0.0', '::') else args.host
+        print(f'实时地图：http://{address}:{server.server_port}\n输出目录：{output}\n'
+              '输入 replan / 重规划，或点击网页按钮；输入 quit / 退出，或 Ctrl+C 停止。\n'
+              '地图切换、重定位或回环坐标修正后，请重启本次会话。', flush=True)
+        while not runtime.stop.wait(.25):
+            pass
+    except KeyboardInterrupt:
+        runtime.stop.set()
+    finally:
+        print('正在退出，等待当前采集/推理或重规划完成……', flush=True)
+        runtime.close()
+        server.shutdown()
+        server.server_close()
+        browser_thread.join()
+    return 0
+
+
+
 def main(argv=None):
     logging.basicConfig(level=logging.INFO, format='%(message)s')
     common = argparse.ArgumentParser(add_help=False)
     common.add_argument('--config', type=Path, help='Python config file; defaults to config/defaults.py')
-    common.add_argument('--task', default='anchors',
-                        choices=('anchors', 'cubify-preview', 'cubify-server', 'build-map',
+    common.add_argument('--task', default='live',
+                        choices=('live', 'anchors', 'cubify-preview', 'cubify-server', 'build-map',
                                  'safe-regions', 'map-editor', 'camera-parameters'))
     options, remaining = common.parse_known_args(argv)
     try:

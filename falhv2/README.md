@@ -2,20 +2,49 @@
 
 本目录实现从地图构建、安全区域提取、观察锚点选择，到视觉采集与找物验证的各阶段功能。本 README 记录运行环境、已实现模块的用法及后续任务入口。
 
-准备好 `data/` 中的地图、机器人和相机配置后，在仓库根目录执行：
+默认入口运行快、慢系统。在 Lenovo 已具备模型与规划依赖的 depth 环境中：
 
 ```bash
-conda activate test
-python -B falhv2/main.py
+conda activate depth
+cd falhv2
+python main.py
 ```
 
-统一入口一次完成安全区域提取、观察候选计算、基线与两阶段优化、复核重选和导出。默认生成 `outputs/safe_regions.json`、`safe_regions.svg`、`anchor_plan.json`、`anchor_plan.html`、`anchor_plan.svg`、`anchor_plan.supports.json`，无需先运行其他模块。地图编辑器和真机相机标定仍是独立的输入准备工具。
+快系统持续读取同步 RGB-D 和底盘栅格，调用 Cubify，按深度二维覆盖与框投影的栅格交集删旧存新；不自动移动底盘。
+慢系统仅在终端收到 `replan` / `重规划`，或网页点击“重规划锚点”后运行。
+每次请求立即冻结一份地图，规划期间快系统继续更新；同一时间仅运行一次重规划，不累计重复请求。
+终端输入 `quit` / `退出` 或 Ctrl+C 退出；正在执行的推理/规划会完成清理后退出。
+
+默认实时页面为 http://127.0.0.1:8090，显示栅格、深度覆盖、物体框、相机 RGB 和最近一次锚点。
+在本机浏览远程 Lenovo 页面，可先运行 `ssh -N -L 8090:127.0.0.1:8090 hri@10.113.45.27`，再打开本机该地址。
+也可显式 `--host 0.0.0.0` 在可信局域网提供访问；此开发页面没有公网认证。
+
+每次启动创建新的 `outputs/live_<时间>_<会话>/`：
+- `map.json`：持续原子更新的地图及恢复状态。
+- `plans/0001/scene.json`：第一次指令冻结的地图；后续指令递增目录。
+- `plans/0001/anchor_plan.json/html/svg` 及 supports、安全区域：独立的重规划结果。
+规划 JSON 记录 source_map；网页明确提示锚点对应的旧地图版本，不会悄悄自动重算。
+
+默认自动生成本次应用会话的 map_id / map_revision，并不代表底盘提供了真实 SLAM 版本。
+重定位、地图切换、回环坐标修正后必须重启会话；默认不继承上次物体地图。
+ROBOT_SOURCE 可以指定会话和设备地址，LIVE 配置页面地址、采集超时和更新间隔；MAP_UPDATE 控制共用覆盖掩膜的深度采样。
+只有 main.py 加载配置，`--config /path/to/robot.py` 可选择另一份配置。
+
+原来的离线锚点全流程改为显式选择：
+
+```bash
+python falhv2/main.py --task anchors
+python falhv2/main.py --task anchors --scene /path/to/map.json
+```
+
+离线任务一次完成安全区域提取、观察候选计算、优化、复核和 JSON/HTML/SVG 导出。
+默认规划参数和输入路径不变；地图编辑器、相机标定和有限帧建图仍通过各自 --task 启动。
 
 候选观察默认按目标物体使用 **4 个进程**并行，每个任务仍读取全部物体作为遮挡体。也可选择线程或立即回退串行：
 
 ```bash
-python -B falhv2/main.py --observation-executor threads --observation-workers 4
-python -B falhv2/main.py --observation-workers 1
+python -B falhv2/main.py --task anchors --observation-executor threads --observation-workers 4
+python -B falhv2/main.py --task anchors --observation-workers 1
 ```
 
 任务结果按原物体顺序合并，MILP 和最终复核保持原流程。三轮完整运行中位数 **23.19 s → 13.86 s（减少 40.2%）**，候选生成 **13.97 s → 4.71 s**；完整 supports、评分、热图、诊断和最终方案一致。4 线程单次为 15.72 s，因此默认选择 4 进程。实验对照与参数说明见[逐物体并行记录](../docs/falhv2/parallel_observation_20261026.md)。
@@ -30,7 +59,7 @@ python -m pip install -r falhv2/requirements.txt
 依赖统一在 `requirements.txt` 中维护，包含 Open3D。默认射线后端仍为 NumPy Float64；Open3D 为显式实验选项，最终原密度及高密度复核始终使用 NumPy Float64：
 
 ```bash
-python -B falhv2/main.py --ray-backend open3d --output falhv2/outputs/open3d/anchor_plan.json
+python -B falhv2/main.py --task anchors --ray-backend open3d --output falhv2/outputs/open3d/anchor_plan.json
 ```
 
 Open3D 使用 Float32；当前地图有少量候选评分差异，且包含启动成本的实测未优于 NumPy，因此不自动切换后端。`configuration.candidate_ray_backend` 和 `verification_ray_backend` 记录实际实现。分阶段过程、精度边界、批次/线程与混合求交实验见[现成库优化记录](../docs/falhv2/library_acceleration_20261026.md)。
@@ -43,7 +72,7 @@ Open3D 使用 Float32；当前地图有少量候选评分差异，且包含启�
 
 通过 `python falhv2/main.py --task build-map --map-id <地图标识> --map-revision <坐标版本> --frames 10` 获取底盘栅格和同步 RGB-D，调用 Cubify，并按当前深度可见性删除旧框、加入本帧新框，不做关联或融合。
 输出规划器兼容的地图 JSON（含恢复状态）及覆盖诊断 SVG；`--resume <地图.json>` 继续更新，`--scene <地图.json>` 用于锚点选择。
-只有 main.py 读取 CUBIFY、ROBOT_SOURCE 和 MAP_UPDATE；默认入口仍为离线选点。
+只有 main.py 读取 CUBIFY、ROBOT_SOURCE 和 MAP_UPDATE；默认入口为实时快、慢系统；--task anchors 为离线选点。
 参数、版本约束与命令见 [地图维护说明](map_maintainers/README.md)。
 
 ## 当前选点目标（2026-10-24）
@@ -112,7 +141,7 @@ cd /home/hri/yutian/Find-Anything-Like-Humans-V2
 顶层路径参数如 MAP_PATH、OUTPUT_DIR 的相对路径以所选配置文件目录为基准；模型字典中的路径建议写绝对路径。
 
 ```bash
-python falhv2/main.py --config /path/to/experiment.py
+python falhv2/main.py --task anchors --config /path/to/experiment.py
 python falhv2/main.py --config /path/to/robot.py --task cubify-preview
 ```
 
@@ -180,7 +209,7 @@ falhv2/
 ```
 
 2026-10-28 的整理只改变包结构，选点算法、默认输入、输出 schema 和参数保持不变。
-`model_clients` 已接入 Cubify Anything RGB-D 的本地/远程调用；`robot_adapters` 已实现同步 RGB-D 获取、栅格地图读取和底盘定位（见 [调用示例](robot_adapters/README.md)），`map_maintainers` 提供单帧地图 AABB 转换。尚未实现多帧融合和机器人建图主流程。使用方法见 [模型客户端](model_clients/README.md)。默认 main.py 仍运行离线锚点选择。
+`model_clients` 已接入 Cubify Anything RGB-D 的本地/远程调用；`robot_adapters` 已实现同步 RGB-D 获取、栅格地图读取和底盘定位（见 [调用示例](robot_adapters/README.md)），`map_maintainers` 实现深度约束的物体地图更新，不做多帧融合。使用方法见 [模型客户端](model_clients/README.md)。默认 main.py 运行实时快、慢系统；离线选点使用 --task anchors。
 完整设计和后续实施顺序见[机器人建图架构](../docs/falhv2/robot_mapping_architecture.md)。
 
 在仓库根目录运行 `python -B falhv2/main.py` 或 `python -B -m falhv2.main`；
@@ -322,7 +351,7 @@ python -B falhv2/main.py --task camera-parameters --list-modes
 在仓库根目录运行统一入口：
 
 ```bash
-python -B falhv2/main.py
+python -B falhv2/main.py --task anchors
 ```
 
 默认输入与 A1 一致：读取 `data/map_aabb.json`、`data/robot.json`，相机读取 `data/camera.d435i.json`。脚本内部调用 A1 重新计算安全区域并直接生成站位，不读取已有规划输出，因此可独立运行。无需机器人起始位姿、起终点或指定锚点数量。
@@ -429,11 +458,12 @@ python -B falhv2/main.py \
 python -B -m unittest discover -s falhv2/tests -v
 node falhv2/tests/test_editor_ui.cjs
 node falhv2/tests/test_anchor_viewer.cjs
+node falhv2/tests/test_live_ui.cjs
 ```
 
 Python 测试另覆盖两阶段字典序目标、独立动作子集穷举、限时/异常兜底、几何复核、高密度缺口修复及最优性证明的适用范围。原加权贪心测试显式验证旧基线。Python 测试覆盖安全区域、相机几何、俯仰与径向范围解析核对、预筛与独立投影对照、内外边界得分、0.5 合格门槛、加权动态贪心、几何裁切入镜比例、热力图与最终动作得分一致性、覆盖缺口及 CLI 导出。Node.js 测试覆盖编辑器、单物体热图、叠加扣票、轮次回放和最佳朝向展示。新求解器重点测试可运行 `python -B -m unittest discover -s falhv2/tests -p 'test_anchor_optimizer.py' -v`。
 
-统一入口测试另覆盖零参数运行的完整输出、A1 只计算一次、配置路径与输入文件保持、从其他工作目录运行脚本、包入口，以及自定义输出文件名不会被安全区域文件覆盖。
+统一入口测试另覆盖默认实时调度、显式离线任务的完整输出、A1 只计算一次、配置路径与输入文件保持、从其他工作目录运行脚本、包入口，以及自定义输出文件名不会被安全区域文件覆盖。
 
 ## 后续模块维护
 
@@ -442,3 +472,9 @@ Python 测试另覆盖两阶段字典序目标、独立动作子集穷举、限�
 模型客户端接口测试需额外安装 `falhv2/model_clients/requirements.txt`，无需 torch 或权重。
 
 机器人适配器测试需安装 `pyzmq`、`msgpack`、`requests`，测试使用本地模拟发布器和 HTTP 服务，无需连接真实机器人。
+
+实时系统验证（2026-10-31）：149 项 Python 测试通过；实时页面 Node 交互测试通过。
+Lenovo depth 环境补齐 shapely==2.1.2；默认实时入口完成真实 RGB-D / 底盘栅格 / Cubify 连续三帧更新、HTTP 页面与状态读取、quit 正常退出。
+快慢并发、冻结快照、重规划失败隔离、实际规划导出在模拟场景中验证；尚未对真实大地图完成一次完整重规划验收。
+
+地图维护已改为二维栅格相交：新旧框使用同一更新区域，网页青色区域即实际更新依据。旧 50% 可见比例规则已移除；切换后启动新会话。

@@ -47,7 +47,7 @@ def main(argv=None, *, model_config):
     from ..model_clients import build_cubify_anything
     client = build_cubify_anything({
         "mode": "local", "path": args.weights, "source_path": args.source_path,
-        "device": args.device, "max_side": args.max_side, "score_threshold": args.threshold})
+        "device": args.device, "fp16": model_config.get("fp16", True), "max_side": args.max_side, "score_threshold": args.threshold})
     try:
         create_app(client).run(host=args.host, port=args.port, threaded=False,
                                debug=False, use_reloader=False)

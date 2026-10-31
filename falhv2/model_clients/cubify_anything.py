@@ -5,6 +5,7 @@ Torch and the CuTR SDK are loaded only when constructing the local client.
 from __future__ import annotations
 
 import base64
+from contextlib import nullcontext
 import hashlib
 import io
 import math
@@ -159,7 +160,7 @@ class CubifyAnythingLocal:
     """
 
     def __init__(self, path, *, source_path=None, device=None, score_threshold=None,
-                 max_side=None):
+                 max_side=None, fp16=True):
         device = "auto" if device is None else device
         max_side = 768 if max_side is None else max_side
         score_threshold = .25 if score_threshold is None else score_threshold
@@ -167,6 +168,9 @@ class CubifyAnythingLocal:
         if isinstance(max_side, bool) or not isinstance(max_side, int) or not 256 <= max_side <= 1024:
             raise ValueError("max_side must be an integer in [256,1024]")
         self.max_side = max_side
+        if not isinstance(fp16, bool):
+            raise ValueError("fp16 must be a boolean")
+        self.fp16 = fp16
         weights = Path(path).expanduser().resolve()
         if not weights.is_file():
             raise FileNotFoundError(f"CuTR RGB-D weights not found: {weights}")
@@ -250,16 +254,19 @@ class CubifyAnythingLocal:
             packaged = self._augmentor.package(sample)
             packaged = self._move(packaged, self._model.pixel_mean)
             batch = self._preprocessor.preprocess([packaged])
-            with self._torch.inference_mode():
+            autocast = (self._torch.autocast("cuda", dtype=self._torch.float16)
+                        if self.fp16 and self.device.type == "cuda" else nullcontext())
+            with self._torch.inference_mode(), autocast:
                 output = self._model(batch)[0]
             # Upstream applies T_gravity to orientation already. Do NOT rotate twice.
-            return make_result(frame, output.scores.detach().cpu().numpy(),
-                               output.pred_boxes_3d.corners.detach().cpu().numpy(),
+            return make_result(frame, output.scores.detach().float().cpu().numpy(),
+                               output.pred_boxes_3d.corners.detach().float().cpu().numpy(),
                                self.model_version, score_threshold)
 
     def healthz(self):
         return {"ok": not self._closed, "model_id": MODEL_ID,
-                "model_version": self.model_version, "device": str(self.device)}
+                "model_version": self.model_version, "device": str(self.device),
+                "precision": "fp16" if self.fp16 and self.device.type == "cuda" else "fp32"}
 
     def close(self):
         with self._lock:
