@@ -2,6 +2,6 @@
   "robot": {
     "footprint_width_m": 0.465,
     "footprint_length_m": 0.545,
-    "safety_margin_m": 0.285
+    "safety_margin_m": 0.1
   }
 }
