@@ -65,6 +65,7 @@ ROBOT_SOURCE = {
 
 # Replace old boxes visible in the current posed depth image; no tracking/fusion.
 MAP_UPDATE = {
+    "min_coverage_ratio": 0.9,  # covered XY area / full AABB XY area; insertion and deletion
     "pixel_stride": 4,          # sampled depth rays; same XY mask for update and display
     "min_depth_m": 0.15,
     "max_depth_m": 8.0,
@@ -78,4 +79,12 @@ LIVE = {
     "port": 8090,
     "timeout_s": 5.0,
     "update_interval_s": 0.1,
+}
+
+# Replay transport only; camera calibration and robot geometry stay unchanged.
+REPLAY_SOURCE = {
+    "endpoint": "ipc:///tmp/jicheng_replay.ipc",
+    "map_endpoint": "ipc:///tmp/jicheng_map_replay.ipc",
+    "idle_timeout_s": 30.0,
+    "max_map_age_s": 3.0,
 }

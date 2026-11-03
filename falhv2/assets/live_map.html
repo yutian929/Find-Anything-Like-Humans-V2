@@ -25,7 +25,7 @@ a{color:#126eaa}#planLink{display:none}#slowError{color:#b33c38}#reset{padding:4
 <section><h2>栅格地图与无类别物体 <button id="reset">复位视角</button></h2>
 <canvas id="map"></canvas>
 <div class="legend"><span><i class="dot" style="background:#fafcfd;border:1px solid #b5c3cf"></i>空闲</span><span><i class="dot" style="background:#dde5eb"></i>未知</span><span><i class="dot" style="background:#4a5866"></i>障碍</span><span><i class="dot" style="background:#65cbd2"></i>深度覆盖</span><span><i class="dot" style="background:#1b976b"></i>本帧新框</span><span><i class="dot" style="background:#9365be"></i>保留旧框</span><span><i class="dot" style="background:#ea9426"></i>最近一次锚点</span></div>
-<div class="foot">滚轮缩放 · 拖动平移。青色区域即更新范围：与旧框投影共享栅格就删除；新框也须与其相交。</div>
+<div class="foot">滚轮缩放 · 拖动平移。青色为深度覆盖区：覆盖面积 / 完整框投影面积达到阈值才更新（默认 90%）；覆盖不足的旧框保留，新框暂不入图。</div>
 </section>
 <aside>
 <section><h2>当前 RGB 与 Cubify 预测</h2><div id="placeholder">等待相机与模型……</div><img id="photo" alt="当前 RGB 与 Cubify 三维框投影"></section>
@@ -49,7 +49,7 @@ a{color:#126eaa}#planLink{display:none}#slowError{color:#b33c38}#reset{padding:4
 const $=id=>document.getElementById(id);
 const canvas=$('map'),ctx=canvas.getContext('2d');
 let current=null,zoom=1,panX=0,panY=0,drag=null,connected=false,lastRevision=null,back=null;
-const labels={starting:'启动中',running:'运行中',error:'异常',stopped:'已停止',idle:'等待指令',queued:'已排队',complete:'已完成'};
+const labels={waiting:'等待回放数据',starting:'启动中',running:'运行中',error:'异常',stopped:'已停止',idle:'等待指令',queued:'已排队',complete:'已完成'};
 function text(id,value){$(id).textContent=value}
 function renderMap(){
  const r=canvas.getBoundingClientRect();
@@ -85,13 +85,13 @@ function refresh(){
  const s=current;if(!s)return;const v=s.view;
  text('fast',labels[s.fast.status]||s.fast.status);text('slow',labels[s.slow.status]||s.slow.status);
  text('error',s.fast.error||'');text('slowError',s.slow.error||'');
- $('replan').disabled=!connected||!v||s.fast.status!=='running'||['queued','running'].includes(s.slow.status);
+ $('replan').disabled=!connected||!v||!['running','complete'].includes(s.fast.status)||['queued','running'].includes(s.slow.status);
  if(v){text('revision',v.revision+' / '+v.frame_id);text('objects',v.objects.length);text('changes',v.added_ids.length+' / '+v.removed_ids.length);text('session',v.map_id);text('predictions',(v.predictions??'—')+' / '+(v.skipped_predictions??'—'));
  $('photo').src=v.rgb;$('photo').style.display='block';$('placeholder').style.display='none'}
  const result=s.slow.last_result;
  if(result){text('planText','基于地图版本 '+result.source_map.revision+'：'+result.anchor_count+' 个锚点，'+result.photo_count+' 张照片。'+(v&&v.revision!==result.source_map.revision?'当前地图已更新。':''));
  $('planLink').href=result.url;$('planLink').style.display='inline'}
- text('notice',s.fast.status==='error'?'地图更新异常，画面保留上一份成功快照；恢复后继续更新。':!v?'正在加载模型或等待第一帧有效地图……':'地图持续更新中。需要重新选择锚点时，点击“重规划锚点”。');
+ text('notice',s.fast.status==='complete'?'回放完成，已保留最终地图，可以重规划锚点。':s.fast.status==='error'?'地图更新异常，画面保留上一份成功快照；恢复后继续更新。':!v?'正在加载模型或等待第一帧有效地图……':'地图持续更新中。需要重新选择锚点时，点击“重规划锚点”。');
  renderMap();
 }
 async function poll(){

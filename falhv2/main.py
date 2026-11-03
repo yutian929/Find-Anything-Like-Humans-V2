@@ -237,7 +237,7 @@ class LiveSystem:
         with self.lock:
             if self.stop.is_set():
                 return False, '系统正在退出'
-            if self.scene is None or self.fast['status'] != 'running':
+            if self.scene is None or self.fast['status'] not in ('running', 'complete'):
                 return False, '还没有可用于重规划的最新地图，请等待采集恢复'
             if self.slow['status'] in ('queued', 'running'):
                 return False, '已有重规划正在执行，请等待完成'
@@ -261,13 +261,22 @@ class LiveSystem:
             from falhv2.map_maintainers.depth_replace import DepthReplacementMap
             from falhv2.tools.cubify_preview import draw_cuboid, color
             builder = DepthReplacementMap(**self.config.MAP_UPDATE)
-            client = build_cubify_anything(dict(self.config.CUBIFY))
-            with AnchorMapRobot(**self.robot_options) as robot:
+            from falhv2.robot_adapters.replay import ReplayRobot, ReplayFinished, ReplayStopped
+            source_options = dict(self.robot_options)
+            replay = source_options.pop('source', 'online') == 'replay'
+            source_type = ReplayRobot if replay else AnchorMapRobot
+            with source_type(**source_options) as robot:
+                client = build_cubify_anything(dict(self.config.CUBIFY))
+                LOGGER.info('模型与数据源已就绪；%s', '可以启动 replay 发布端' if replay else '等待在线数据')
                 while not self.stop.is_set():
                     started = time.monotonic()
                     try:
-                        builder.set_grid(robot.grid_snapshot(timeout_s=self.timeout_s))
-                        frame = robot.capture(timeout_s=self.timeout_s)
+                        if replay:
+                            frame, grid = robot.capture_pair(timeout_s=self.timeout_s)
+                            builder.set_grid(grid)
+                        else:
+                            builder.set_grid(robot.grid_snapshot(timeout_s=self.timeout_s))
+                            frame = robot.capture(timeout_s=self.timeout_s)
                         result = client.detect(frame)
                         update = builder.integrate(frame, result)
                         mask = builder.coverage
@@ -298,8 +307,28 @@ class LiveSystem:
                                     rgb='data:image/jpeg;base64,'+base64.b64encode(image).decode())
                         with self.lock:
                             self.scene, self.view = scene, view
+                            if replay:
+                                self.fast['replay'] = robot.diagnostics()
                             self.fast.update(status='running', error=None, updated_at=time.time(),
                                              processing_s=time.monotonic()-started)
+                    except ReplayFinished:
+                        with self.lock:
+                            self.fast.update(status='complete', error=None, replay=robot.diagnostics())
+                        LOGGER.info('回放完成：%s', robot.diagnostics())
+                        break
+                    except ReplayStopped as exc:
+                        with self.lock:
+                            self.fast.update(status='error', error=str(exc), replay=robot.diagnostics())
+                        LOGGER.error('回放停止：%s', exc)
+                        break
+                    except TimeoutError as exc:
+                        if not replay:
+                            with self.lock:
+                                self.fast.update(status='error', error=str(exc))
+                        else:
+                            with self.lock:
+                                self.fast.update(status='waiting', error=str(exc), replay=robot.diagnostics())
+                        continue
                     except Exception as exc:
                         LOGGER.warning('地图更新失败，保留上一份成功快照：%s', exc)
                         with self.lock:
@@ -315,7 +344,7 @@ class LiveSystem:
             if client is not None:
                 client.close()
             with self.lock:
-                if self.fast['status'] != 'error':
+                if self.fast['status'] not in ('error', 'complete'):
                     self.fast['status'] = 'stopped'
 
     def _plan_snapshot(self, request_id, scene):
@@ -421,7 +450,9 @@ def run_live(argv, config):
     parser.add_argument('--port', type=int, default=options['port'])
     parser.add_argument('--map-id', default=config.ROBOT_SOURCE.get('map_id'))
     parser.add_argument('--map-revision', default=config.ROBOT_SOURCE.get('map_revision'))
-    parser.add_argument('--endpoint', default=config.ROBOT_SOURCE['endpoint'])
+    parser.add_argument('--source', choices=('online', 'replay'), default='online')
+    parser.add_argument('--endpoint', help='RGB-D endpoint; default depends on source')
+    parser.add_argument('--map-endpoint', default=config.REPLAY_SOURCE['map_endpoint'])
     parser.add_argument('--chassis-url', default=config.ROBOT_SOURCE['chassis_url'])
     parser.add_argument('--output-dir', type=Path)
     args = parser.parse_args(argv)
@@ -435,7 +466,13 @@ def run_live(argv, config):
     session = datetime.now().strftime('%Y%m%d_%H%M%S')+'_'+uuid.uuid4().hex[:8]
     robot_options = dict(map_id=args.map_id or 'live-'+session,
                          map_revision=args.map_revision or 'session-'+session,
-                         endpoint=args.endpoint, chassis_url=args.chassis_url)
+                         endpoint=args.endpoint or config.ROBOT_SOURCE['endpoint'], chassis_url=args.chassis_url)
+    if args.source == 'replay':
+        robot_options = dict(config.REPLAY_SOURCE, source='replay',
+                             map_id=args.map_id or 'replay-'+session,
+                             map_revision=args.map_revision or 'session-'+session)
+        robot_options.update(endpoint=args.endpoint or config.REPLAY_SOURCE['endpoint'],
+                             map_endpoint=args.map_endpoint)
     output = args.output_dir or config.OUTPUT_DIR/('live_'+session)
     if output.exists() and any(output.iterdir()):
         parser.error('Live output directory must be new or empty')

@@ -10,7 +10,7 @@ cd falhv2
 python main.py
 ```
 
-快系统持续读取同步 RGB-D 和底盘栅格，调用 Cubify，按深度二维覆盖与框投影的栅格交集删旧存新；不自动移动底盘。
+快系统持续读取同步 RGB-D 和底盘栅格，调用 Cubify，按深度二维覆盖占完整框投影面积的比例（默认至少 90%）删旧存新；不自动移动底盘。
 慢系统仅在终端收到 `replan` / `重规划`，或网页点击“重规划锚点”后运行。
 每次请求立即冻结一份地图，规划期间快系统继续更新；同一时间仅运行一次重规划，不累计重复请求。
 终端输入 `quit` / `退出` 或 Ctrl+C 退出；正在执行的推理/规划会完成清理后退出。
@@ -67,6 +67,87 @@ Open3D 使用 Float32；当前地图有少量候选评分差异，且包含启�
 研究定义与算法依据见[锚点选择研究记录（含旧版路径约束方案）](../docs/falhv2/path_constrained_anchor_selection_v0_20261013.md)；实施进度和验收要求见[研究路线与交接](../docs/falhv2/research_roadmap_and_handoff.md)。
 
 观察模型与旧加权贪心规则见[锚点选择改进说明](../docs/falhv2/anchor_selection_refine.md)：安装位姿约束观察区域、连续权重和逐物体热力图。当前选点采用下述两阶段整数优化。[旧版锚点选取图解](../docs/falhv2/anchor_selection_explained_20261019.md)保留了改进前的七张示意图和运行案例。
+
+## 真机录制数据回放（ZMQ）
+
+`--source replay` 从 `jicheng` 接收录制的 RGB-D 和底盘地图，沿用现有 Cubify、
+深度覆盖更新和锚点规划。不会访问真实底盘 HTTP，也不会发送运动指令。
+不改变相机标定、安装参数和机器人尺寸；图像内参、深度比例与位姿取自录制帧。
+不传 `--source` 仍为原来的在线模式。当前回放入口是默认 live 任务，
+`--task build-map` 保持在线有限帧建图，不支持该参数。
+
+在 **Lenovo 的两个终端**中运行。先启动接收端：
+
+```bash
+conda activate depth
+cd /home/hri/yutian/Find-Anything-Like-Humans-V2
+python falhv2/main.py --source replay
+```
+
+等终端出现“模型与数据源已就绪；可以启动 replay 发布端”，再在第二个终端启动：
+
+```bash
+cd /home/hri/jicheng
+bash run.sh replay \
+  data/20261102-231008-539164-6108/recording.recovered.sqlite3 \
+  --after-map-reset \
+  --camera-endpoint ipc:///tmp/jicheng_replay.ipc \
+  --map-endpoint ipc:///tmp/jicheng_map_replay.ipc \
+  --speed 0.5 \
+  --warmup-s 3
+```
+
+该恢复包含 1443 帧、53 张地图，约 51.3 秒；已封包但 `recording_complete=false`。
+尾部未提交数据和最终地图完整性无法确认，回放提示不完整是预期行为。
+原始 `recording.sqlite3` 未封包，使用上述恢复副本，不修改原包。
+`--after-map-reset` 同时筛选图像采集时间和地图请求开始时间；清图标记是主机
+观察时间，不是底盘精确清图时刻，也不能证明不存在后续 SLAM 回环坐标修正。
+
+Lenovo 浏览器打开 http://127.0.0.1:8090 。在 Mac 查看时，另开终端：
+
+```bash
+ssh -N -L 8090:127.0.0.1:8090 lenovo
+```
+
+然后在 Mac 打开同一网址。页面显示 RGB、栅格、覆盖区和物体框。
+点击“重规划锚点”或在 main 终端输入 `replan` 可冻结地图并规划。
+正常回放结束显示“已完成”，保留最后地图及重规划能力；输入 `quit` 退出 main。
+每次重播或切换包都重新启动 main，使用新的物体地图会话。
+
+配置 `REPLAY_SOURCE` 只管理回放通信：相机 endpoint、map_endpoint、
+idle_timeout_s（收到数据后无消息 30 秒视为中断）、max_map_age_s（默认 3 秒，
+按录制时间限制配对地图的年龄）。CLI `--endpoint` / `--map-endpoint` 可覆盖地址。
+这些 IPC 地址要求发布端与接收端位于同一台电脑；网页 SSH 转发不传输传感器消息。
+在线 `ROBOT_SOURCE` 地址和相机/机器人 JSON 不变。
+
+回放语义：
+
+- 保留历史纳秒时间戳，不套用在线“超过 1 秒过期”检查。
+- 地图时间取 HTTP 请求起止中点；只匹配不晚于图像采集时间、且未超过年龄上限的已收到地图。
+  两条 ZMQ 流独立到达，匹配不保证选到录制包内绝对最近的一张地图，也不是硬件同步。
+- 无可匹配地图的起始图像被跳过；后续地图不能倒配给更早图像。
+- 后台持续接收，保留最新有效配对，地图缓存最多 128 张。慢推理会跳过中间帧；
+  这是近实时回放，不承诺逐帧处理或不同速度下物体地图完全一致。
+- `/api/state` 的 `fast.replay` 和完成日志记录 received_frames / received_maps、
+  processed_frames、overwritten_frames、unmatched_frames，以及发布端结束时的 publisher_counts。
+  接收数量与发布数量可用于检查传输损失，overwritten_frames 表示接收后主动覆盖旧配对。
+- 发布端必须使用带 `replay.control` 结束消息的新版 `/home/hri/jicheng/replay.py`，并指定地图端点。
+  两条流都收到结束通知才标记完成；缺少通知、发布端崩溃或中途停止会在超时后显示异常，保留最后成功地图。
+  PUB/SUB 无确认，即便结束通知重复发送仍可能丢失；超时不会伪装成成功结束。
+
+验证回放适配器（无需机器人或模型权重）：
+
+```bash
+python -B -m unittest falhv2.tests.test_replay -v
+```
+
+回放接入验收（2026-11-03）：154 项 Python 测试通过；页面交互测试通过（包括结束后允许重规划）。
+选定恢复包在独立 IPC 地址和 18090 测试端口以 2 倍速完成真实 Cubify 回放：
+清图后发布/接收均为 1332 帧、49 张地图；处理 86 帧，覆盖旧待处理配对 1244 帧，
+未配对 2 帧，最终地图含 45 个物体框、更新版本 86，状态 complete。
+这是链路验收，非物体几何精度或真实场景锚点质量验收。结束后重规划能力由模拟场景测试覆盖，
+本次真实录制地图未执行完整锚点规划。验收日志和结果位于
+`outputs/replay_validation_1793672766437956776/`，测试进程已正常退出。
 
 ## 真实机器人地图更新
 
@@ -477,4 +558,11 @@ Python 测试另覆盖两阶段字典序目标、独立动作子集穷举、限�
 Lenovo depth 环境补齐 shapely==2.1.2；默认实时入口完成真实 RGB-D / 底盘栅格 / Cubify 连续三帧更新、HTTP 页面与状态读取、quit 正常退出。
 快慢并发、冻结快照、重规划失败隔离、实际规划导出在模拟场景中验证；尚未对真实大地图完成一次完整重规划验收。
 
-地图维护已改为二维栅格相交：新旧框使用同一更新区域，网页青色区域即实际更新依据。旧 50% 可见比例规则已移除；切换后启动新会话。
+地图维护更新（2026-11-03）：新旧框统一采用 XY 面积覆盖比例，
+`面积(AABB 投影 ∩ 青色深度覆盖区) / 完整 AABB 投影面积 >= 0.9` 才允许删旧／新增。
+边缘少量重叠的旧框保留，新框覆盖不足暂不入图；不叠加图像边缘过滤或实例匹配。
+阈值由 `MAP_UPDATE["min_coverage_ratio"] = 0.9` 配置；这是覆盖比例，不是 IoU 或 RGB 入镜比例。
+边界格按实际面积计入，地图外的框面积仍保留在分母，青色掩膜不填洞、不改变。
+记录每个新旧框的比例与过滤原因，详见 [地图维护说明](map_maintainers/README.md)。
+请退出并重启 main 与 replay 创建新会话；旧 schema 2 地图不可直接 resume 新 schema 3 策略。
+保守门槛可能使新框较少或旧框残留，尚不处理实例去重、遮挡与物体消失确认。

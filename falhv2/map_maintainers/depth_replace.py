@@ -11,22 +11,44 @@ from .base import MapSnapshot, ObjectTrack
 from .cubify import cuboids_to_map_aabbs
 
 
-def intersects_coverage(lower, upper, grid, coverage):
-    """XY AABB and observed region share at least one map cell."""
+def coverage_ratio(lower, upper, grid, coverage):
+    """Area(AABB XY intersect covered cells) / full AABB XY area, not IoU.
+
+    Boundary cells are weighted by actual overlap. Out-of-map area stays in
+    the denominator. Heights deliberately do not participate in this policy.
+    """
     import math
     lo, hi = np.asarray(lower, float), np.asarray(upper, float)
     if lo.shape != (3,) or hi.shape != (3,) or not np.isfinite([lo, hi]).all() or np.any(lo >= hi):
         raise ValueError("Invalid map AABB")
     h, w = coverage.shape
+    if (h, w) != (len(grid.rows), len(grid.rows[0])):
+        raise ValueError("Coverage shape differs from grid")
     x0, y0 = grid.origin
     r = grid.resolution
-    if hi[0] < x0 or hi[1] < y0 or lo[0] >= x0+w*r or lo[1] >= y0+h*r:
-        return False
+    if hi[0] <= x0 or hi[1] <= y0 or lo[0] >= x0+w*r or lo[1] >= y0+h*r:
+        return 0.0
     c0 = max(0, math.floor((lo[0]-x0)/r))
-    c1 = min(w-1, math.floor((hi[0]-x0)/r))
+    c1 = min(w-1, math.ceil((hi[0]-x0)/r)-1)
     bottom = max(0, math.floor((lo[1]-y0)/r))
-    top = min(h-1, math.floor((hi[1]-y0)/r))
-    return bool(coverage[h-1-top:h-bottom, c0:c1+1].any())
+    top = min(h-1, math.ceil((hi[1]-y0)/r)-1)
+    xs = x0 + np.arange(c0, c1+1)*r
+    ys = y0 + np.arange(bottom, top+1)*r
+    dx = np.maximum(0., np.minimum(hi[0], xs+r)-np.maximum(lo[0], xs))
+    dy = np.maximum(0., np.minimum(hi[1], ys+r)-np.maximum(lo[1], ys))
+    mask = coverage[h-1-top:h-bottom, c0:c1+1]
+    area = np.sum(mask * dy[::-1, None] * dx[None, :])
+    return float(np.clip(area / ((hi[0]-lo[0])*(hi[1]-lo[1])), 0., 1.))
+
+
+def intersects_coverage(lower, upper, grid, coverage):
+    """Positive area overlap; retained as a geometry helper, not deletion policy."""
+    return coverage_ratio(lower, upper, grid, coverage) > 0.
+
+
+def meets_coverage_threshold(ratio, threshold):
+    # Include exact-threshold geometry despite floating point area roundoff.
+    return ratio >= threshold or abs(ratio-threshold) <= 1e-12
 
 
 def validate_grid(grid):
@@ -42,7 +64,7 @@ class DepthReplacementMap:
     """Keep only current records. IDs identify observations, not tracked objects."""
 
     def __init__(self, *, pixel_stride=4, min_depth_m=.15, max_depth_m=8.,
-                 min_object_height_m=.10):
+                 min_object_height_m=.10, min_coverage_ratio=.9):
         if (not np.isfinite([min_depth_m, max_depth_m]).all()
                 or not 0 < min_depth_m < max_depth_m
                 or isinstance(pixel_stride, bool) or not isinstance(pixel_stride, int)
@@ -52,6 +74,11 @@ class DepthReplacementMap:
                 or not isinstance(min_object_height_m, (int, float))
                 or not np.isfinite(min_object_height_m) or min_object_height_m < 0):
             raise ValueError("min_object_height_m must be finite and nonnegative")
+        if (isinstance(min_coverage_ratio, bool)
+                or not isinstance(min_coverage_ratio, (int, float))
+                or not np.isfinite(min_coverage_ratio) or not 0 < min_coverage_ratio <= 1):
+            raise ValueError("min_coverage_ratio must be finite in (0, 1]")
+        self.min_coverage_ratio = float(min_coverage_ratio)
         self.min_object_height_m = float(min_object_height_m)
         self.options = dict(pixel_stride=pixel_stride, min_depth_m=min_depth_m,
                             max_depth_m=max_depth_m)
@@ -84,9 +111,12 @@ class DepthReplacementMap:
         coverage = depth_coverage(frame, self.grid, **self.options)
         retained, decisions, removed = [], [], []
         for obj in self.objects:
-            delete = intersects_coverage(obj.lower, obj.upper, self.grid, coverage)
+            ratio = coverage_ratio(obj.lower, obj.upper, self.grid, coverage)
+            delete = meets_coverage_threshold(ratio, self.min_coverage_ratio)
             decisions.append(dict(object_id=obj.object_id, deleted=delete,
-                                  intersects_coverage=delete, reason="xy_grid_intersection"))
+                                  intersects_coverage=ratio > 0, coverage_ratio=ratio,
+                                  reason=("coverage_threshold_met" if delete
+                                          else "insufficient_coverage")))
             if delete:
                 removed.append(obj.object_id)
             else:
@@ -94,9 +124,13 @@ class DepthReplacementMap:
         # Map Z=0 is the calibrated floor; use top height, not box thickness.
         ground = [obs.detection_index for obs in observations
                   if obs.upper[2] <= self.min_object_height_m]
+        ratios = {obs.detection_index: coverage_ratio(obs.lower, obs.upper, self.grid, coverage)
+                  for obs in observations}
+        coverage_filtered = [index for index, ratio in ratios.items()
+                             if not meets_coverage_threshold(ratio, self.min_coverage_ratio)]
         accepted = [obs for obs in observations
                     if obs.upper[2] > self.min_object_height_m
-                    and intersects_coverage(obs.lower, obs.upper, self.grid, coverage)]
+                    and obs.detection_index not in coverage_filtered]
         skipped = [obs.detection_index for obs in observations if obs not in accepted]
         revision = self.revision + 1
         added = tuple(ObjectTrack(
@@ -113,6 +147,10 @@ class DepthReplacementMap:
                                 decisions=decisions, model_version=result.model_version,
                                 predictions=len(observations), skipped_detection_indices=skipped,
                                 ground_filtered_indices=ground,
+                                min_coverage_ratio=self.min_coverage_ratio,
+                                coverage_filtered_indices=coverage_filtered,
+                                detection_coverage_ratios=[dict(detection_index=i, coverage_ratio=r)
+                                                           for i, r in ratios.items()],
                                 coverage_cells=int(coverage.sum()))
         return self.last_update
 
@@ -130,12 +168,13 @@ class DepthReplacementMap:
                     objects=[dict(id=o.object_id, position=((np.array(o.lower)+o.upper)/2).tolist(),
                                   aabb=dict(min=list(o.lower), max=list(o.upper)))
                              for o in snap.objects],
-                    mapping=dict(schema_version=2, policy="xy_depth_replacement",
+                    mapping=dict(schema_version=3, policy="xy_depth_coverage_ratio",
                                  grid_metadata={k:v for k,v in asdict(snap.grid).items()
                                                 if k not in ("rows", "origin", "resolution")},
                                  revision=self.revision, last_timestamp_ns=self.last_timestamp_ns,
                                  last_frame_id=self.last_frame_id,
-                                 options=dict(self.options, min_object_height_m=self.min_object_height_m),
+                                 options=dict(self.options, min_object_height_m=self.min_object_height_m,
+                                              min_coverage_ratio=self.min_coverage_ratio),
                                  records=[asdict(o) for o in self.objects], last_update=self.last_update))
 
     def save(self, path):
@@ -159,8 +198,8 @@ class DepthReplacementMap:
     def load(cls, path, **options):
         data = json.loads(Path(path).read_text(encoding="utf-8"))
         meta = data["mapping"]
-        if meta["schema_version"] != 2 or meta["policy"] != "xy_depth_replacement":
-            raise ValueError("Unsupported map state; start a fresh map for XY replacement")
+        if meta["schema_version"] != 3 or meta["policy"] != "xy_depth_coverage_ratio":
+            raise ValueError("Unsupported map state; start a fresh map for coverage-ratio replacement")
         builder = cls(**(options or meta["options"]))
         grid = data["grid"]
         builder.set_grid(GridSnapshot(**meta["grid_metadata"], rows=tuple(grid["rows"]),

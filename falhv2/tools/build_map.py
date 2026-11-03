@@ -54,7 +54,7 @@ def save_coverage_svg(path, frame, builder, previous, mask):
         f'<text x="20" y="25" font-size="19">{title}</text>'
         '<text x="20" y="50" font-size="14">Cyan: sampled depth coverage | gray: SLAM occupancy</text>'
         '<text x="20" y="73" font-size="14">Orange: deleted | purple: retained | green: new</text>'
-        '<text x="20" y="91" font-size="12">Shared XY cell: remove old box; add only predictions intersecting cyan.</text>'
+        '<text x="20" y="91" font-size="12">Covered XY area / full box area must meet the configured threshold (default 90%).</text>'
     )
     Path(path).write_text(f'<svg xmlns="http://www.w3.org/2000/svg" width="{max(700,w*scale+40)}" '
                          f'height="{h*scale+130}" style="background:white;font-family:sans-serif">'

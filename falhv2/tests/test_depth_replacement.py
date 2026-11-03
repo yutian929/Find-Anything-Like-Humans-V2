@@ -19,10 +19,11 @@ from falhv2.map_maintainers.cubify import cuboids_to_map_aabbs
 def frame(stamp=1, depth=6.):
     T = np.array([[0., 0., 1., 0.], [-1., 0., 0., 0.],
                   [0., -1., 0., 1.], [0., 0., 0., 1.]])
+    # Dense enough at stride=4 for area-ratio tests; same approximate field of view.
     return RGBDFrame(str(stamp), stamp, "unix", "room", "session-1", "optical",
-                     CameraIntrinsics(64, 48, 40., 40., 31.5, 23.5),
-                     np.zeros((48, 64, 3), np.uint8),
-                     np.full((48, 64), depth, np.float32), T)
+                     CameraIntrinsics(256, 192, 160., 160., 127.5, 95.5),
+                     np.zeros((192, 256, 3), np.uint8),
+                     np.full((192, 256), depth, np.float32), T)
 
 
 def grid():
