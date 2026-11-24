@@ -1,7 +1,8 @@
 # 真实机器人建图与锚点选择的代码架构
 
-更新：2026-10-31。已实现深度约束的删旧存新；默认 main.py 持续更新地图，按 replan / 网页指令冻结快照并重规划。有限帧建图保留为 --task build-map，离线选点为 --task anchors。
-当前实现不做实例关联、融合或连续缺失确认，详见 [地图维护说明](../../falhv2/map_maintainers/README.md)。
+更新：2026-11-24。外部快系统负责持续建图并导出场景快照。
+FALHv2 使用 `python falhv2/main.py --task anchors --scene /path/to/falhv2_scene.json` 读取快照并离线规划。
+深度约束地图更新保留为 Python API，详见 [地图维护说明](../../falhv2/map_maintainers/README.md)。
 
 以下保留 2026-10-28 的初始架构讨论及当日验收记录；其中多帧融合和生命周期方案已被当前简化替换方案取代，不是当前实现要求。
 

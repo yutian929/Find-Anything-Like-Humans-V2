@@ -1,6 +1,5 @@
 import base64
 import itertools
-import threading
 import unittest
 from dataclasses import replace
 from types import SimpleNamespace
@@ -148,51 +147,6 @@ class CubifyGeometryTests(unittest.TestCase):
             build_cubify_anything({"mode":"remote","server_url":"not-a-url"})
 
 
-class CubifyHTTPTests(unittest.TestCase):
-    def test_real_http_roundtrip_empty_error_and_close(self):
-        from werkzeug.serving import make_server
-        from falhv2.tools.cubify_server import create_app
-
-        class Detector:
-            fail = False
-            def healthz(self):
-                return {"ok":True}
-            def detect(self, frame, *, score_threshold=None):
-                if self.fail:
-                    raise RuntimeError("inference failed")
-                return make_result(frame,[.8],[sample_corners()],"fake-test",score_threshold)
-
-        detector = Detector()
-        app = create_app(detector)
-        app.logger.disabled = True
-        server = make_server("127.0.0.1",0,app)
-        thread = threading.Thread(target=server.serve_forever,daemon=True)
-        thread.start()
-        client = build_cubify_anything({
-            "mode":"remote","server_url":f"http://127.0.0.1:{server.server_port}",
-            "timeout_s":5})
-        client._session.trust_env = False
-        try:
-            self.assertTrue(client.healthz()["ok"])
-            result = client.detect(sample_frame())
-            np.testing.assert_array_equal(result.cuboids[0].corners_camera_m, sample_corners())
-            self.assertEqual(client.detect(sample_frame(),score_threshold=.9).cuboids,())
-            bad = app.test_client().post("/v1/cubify/detect",json={"protocol_version":0})
-            self.assertEqual(bad.status_code,422)
-            detector.fail = True
-            import requests
-            with self.assertRaises(requests.HTTPError):
-                client.detect(sample_frame())
-            client.close()
-            with self.assertRaises(RuntimeError):
-                client.detect(sample_frame())
-        finally:
-            client.close()
-            server.shutdown()
-            thread.join(5)
-            server.server_close()
-
-
 class CubifyConfigurationTests(unittest.TestCase):
     def test_explicit_remote_parameters_do_not_construct_local_model(self):
         from unittest.mock import patch
@@ -224,33 +178,3 @@ class CubifyConfigurationTests(unittest.TestCase):
             build_cubify_anything({"score_threshol":.3})
         with self.assertRaises(TypeError):
             build_cubify_anything()
-
-    def test_preview_respects_injected_parameters_and_cli_overrides(self):
-        from falhv2.tools.cubify_preview import parse_options
-        config=dict(mode="remote",url="http://host:8123",score_threshold=.6,max_side=512)
-        args,cfg=parse_options([],model_config=config,output_dir="/explicit/output")
-        self.assertEqual(cfg["mode"],"remote")
-        self.assertEqual(cfg["url"],"http://host:8123")
-        self.assertEqual(args.threshold,.6)
-        self.assertEqual(args.output_dir,"/explicit/output")
-        args,cfg=parse_options(["--mode","local","--threshold","0.4","--max-side","640"],
-                               model_config=config,output_dir="/explicit/output")
-        self.assertEqual(cfg["mode"],"local")
-        self.assertEqual(cfg["max_side"],640)
-        self.assertEqual(args.threshold,.4)
-        self.assertEqual(config["mode"],"remote")
-
-    def test_server_uses_injected_port_and_always_loads_local_backend(self):
-        from unittest.mock import patch, MagicMock
-        from falhv2.tools import cubify_server
-        config=dict(mode="remote",path="/weights",source_path=None,device="cpu",
-                    max_side=512,score_threshold=.7,url="http://127.0.0.1:18999")
-        client,app=MagicMock(),MagicMock()
-        with patch("falhv2.model_clients.build_cubify_anything",return_value=client) as factory, \
-             patch.object(cubify_server,"create_app",return_value=app):
-            cubify_server.main([],model_config=config)
-            self.assertEqual(factory.call_args.args[0]["mode"],"local")
-            self.assertEqual(factory.call_args.args[0]["max_side"],512)
-            self.assertEqual(factory.call_args.args[0]["score_threshold"],.7)
-            self.assertEqual(app.run.call_args.kwargs["port"],18999)
-            client.close.assert_called_once()

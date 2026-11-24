@@ -165,7 +165,6 @@ class ConfigBoundaryTests(unittest.TestCase):
         import subprocess
         source = (
             "import sys; import falhv2.model_clients.cubify_anything; "
-            "import falhv2.tools.cubify_preview; import falhv2.tools.cubify_server; "
             "import falhv2.anchor_planners.anchor_verification; "
             "import falhv2.tools.map_editor; import falhv2.tools.camera_parameters; "
             "assert not any(n == 'falhv2.config' or n.startswith('falhv2.config.') for n in sys.modules)"
@@ -175,21 +174,21 @@ class ConfigBoundaryTests(unittest.TestCase):
         self.assertEqual(result.returncode,0,result.stderr)
 
     def test_two_config_files_dispatch_without_global_mutation(self):
-        from falhv2.tools import cubify_preview
-        before=dict(settings.CUBIFY)
+        from falhv2.tools import map_editor
+
+        default_map = settings.MAP_PATH
         with tempfile.TemporaryDirectory() as folder:
-            root=Path(folder)
-            for index in (1,2):
-                path=root/f"robot{index}.py"
-                path.write_text(f"CUBIFY = {{'mode': 'remote', 'url': 'http://robot{index}:8093'}}\nOUTPUT_DIR = 'results{index}'\n")
-                with patch.object(cubify_preview,"main",return_value=0) as run:
-                    self.assertEqual(entrypoint.main(["--config",str(path),"--task","cubify-preview",
-                                                     "--threshold","0.4"]),0)
-                    self.assertEqual(run.call_args.args[0],["--threshold","0.4"])
-                    self.assertEqual(run.call_args.kwargs["model_config"]["url"],f"http://robot{index}:8093")
-                    self.assertEqual(run.call_args.kwargs["output_dir"],root/f"results{index}")
-                    run.call_args.kwargs["model_config"]["mode"]="changed-by-caller"
-                self.assertEqual(settings.CUBIFY,before)
+            root = Path(folder)
+            for index in (1, 2):
+                config = root / f"experiment{index}.py"
+                config.write_text(f"MAP_PATH = 'map{index}.json'\n")
+                with patch.object(map_editor, "main", return_value=0) as run:
+                    args = ["--config", str(config), "--task", "map-editor", "--port", "8765"]
+                    self.assertEqual(entrypoint.main(args), 0)
+                run.assert_called_once_with(
+                    ["--port", "8765"], page_path=settings.EDITOR_PAGE,
+                    map_path=root / f"map{index}.json")
+                self.assertEqual(settings.MAP_PATH, default_map)
 
     def test_selected_config_controls_actual_planning(self):
         with tempfile.TemporaryDirectory() as folder:

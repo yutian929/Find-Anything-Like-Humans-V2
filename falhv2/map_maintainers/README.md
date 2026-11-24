@@ -5,15 +5,14 @@
 
 - `cubify.py`：变换全部八个角点后，计算地图系 AABB。
 - `depth_replace.py`：检查旧 AABB 的深度可见性，替换、快照、原子存储和规划导出。
-- `../tools/build_map.py`：采集、模型调用和诊断 SVG；仅由 main.py 注入配置。
 
 ## 更新规则（XY 面积覆盖比例，默认 0.9）
 
 1. 使用采集时刻相机位姿，把有效深度像素对应的射线段投到地图 XY 平面。
 2. 射线从相机到实测表面停止，栅格化后取并集；不取凸包，不跨无效深度补洞。
 3. 对每个旧 AABB，计算 `r = 面积(AABB 的 XY 投影 ∩ 青色深度覆盖区) / 完整 AABB 的 XY 投影面积`。
-   只有 `r >= MAP_UPDATE["min_coverage_ratio"]` 才删除；默认阈值 **0.9**，不足时保留整个旧框。
-4. 新 AABB 使用同一个比例门槛；覆盖不足暂不入图，右侧 RGB 模型预览仍显示原始预测。
+   只有 `r >= min_coverage_ratio` 才删除；默认阈值 **0.9**，不足时保留整个旧框。
+4. 新 AABB 使用同一个比例门槛；覆盖不足暂不入图。
    新框还需满足原有的离地高度筛选。
 
 这不是 IoU：分母是完整物体投影面积，不是并集面积。边界栅格按实际相交面积加权；
@@ -38,51 +37,33 @@ min_depth_m=0.15、max_depth_m=8、min_object_height_m=0.10。
 `skipped_detection_indices` 包含所有未入图检测，含高度过滤与覆盖过滤，两个原因可能重叠。
 
 新恢复状态为 schema_version=3 / xy_depth_coverage_ratio，保存实际阈值。
-旧相交即删除策略的 schema_version=2 地图不允许直接 --resume；请重启 main/replay 创建新会话。
+旧相交即删除策略的 schema_version=2 地图不能通过 `DepthReplacementMap.load` 恢复更新状态。
 旧输出保留，可用于结果对比和离线查看。
 
-## 运行
+## 使用
 
-在仓库根目录，使用已安装模型和机器人依赖的环境：
+应用可通过 Python API 调用 `DepthReplacementMap` 的 `set_grid`、`integrate` 和 `save`。
+锚点规划直接读取外部建图系统导出的一份完整场景：
 
 ```bash
-conda run -n depth python falhv2/main.py --task build-map \
-  --map-id room-a --map-revision slam-session-1 \
-  --frames 10 --output falhv2/outputs/robot_map.json
-
-# 继续维护同一地图坐标系下的已有结果
-conda run -n depth python falhv2/main.py --task build-map \
-  --map-id room-a --map-revision slam-session-1 \
-  --frames 10 --resume falhv2/outputs/robot_map.json
-
-# 使用生成的地图运行现有锚点选择流程
-python falhv2/main.py --task anchors --scene falhv2/outputs/robot_map.json
+python falhv2/main.py --task anchors --scene /path/to/falhv2_scene.json
 ```
-
-示例 room-a / slam-session-1 必须替换为实际会话标识。
-ROBOT_SOURCE 字典可配置 map_id、map_revision、endpoint 和 chassis_url；
-也可通过上面的 CLI 参数覆盖。CUBIFY 仍为一个字典，支持 local / remote。
-只有 main.py 加载配置；可添加 `--config /path/to/robot.py` 选择另一份配置。
-
-默认只处理一帧；--frames 为有限帧数，不自动移动底盘。模型加载一次，每次更新重新获取栅格和新鲜同步 RGB-D。
-已有输出文件必须显式 --resume，避免无意覆盖。默认 main.py 现在启动持续更新与按指令重规划；--task anchors 执行离线选点。
 
 ## 输出与限制
 
 一个 JSON 同时包含规划器的 grid + objects，以及 mapping 下的恢复状态、参数和最新一帧删除诊断。
 每帧通过同目录临时文件和原子替换保存；帧处理失败时，之前成功保存的 JSON 保持不变。
-同名 SVG 显示栅格、稀疏深度覆盖、删除框（橙）、保留框（紫）、新增框（绿）；SVG 是附属诊断，不和 JSON 作跨文件事务。
 不保存所有历史帧，记录 ID 只代表单次观测；ObjectTrack 的 confirmed 在这里表示已纳入地图，不表示多帧确认。
 
 当前底盘/发布器不提供可靠的坐标修正版本，map_revision 由调用者指定，无法自动发现未申报的回环修正。
 地图切换、定位重置或坐标修正后，必须使用新的会话版本和输出文件；当前实现拒绝混用已声明的不同版本，不做历史重投影。
 同坐标系下栅格范围/原点随探索变化可以正常更新。
 
-已覆盖墙遮挡、一个栅格相交、不同高度、无效深度、坐标/时序错误、空预测、静止重复帧与预测抖动不累积、保存恢复、旧策略拒绝，以及两帧 CLI 更新。
+已覆盖墙遮挡、一个栅格相交、不同高度、无效深度、坐标/时序错误、空预测、静止重复帧与预测抖动不累积、保存恢复和旧策略拒绝。
 
 ### Simple ground rejection
 
-`MAP_UPDATE["min_object_height_m"]` defaults to `0.10`. The map frame must have calibrated ground at Z=0 and Z pointing up. New cuboids whose highest map-frame corner is at or below this threshold are excluded. This tests height above ground, not box thickness or bottom height. Small low objects may also be rejected; thick floor predictions may remain. Original depth coverage is unchanged; old-box deletion uses the coverage-ratio threshold above. Update diagnostics include `ground_filtered_indices`; these also count as skipped predictions. The threshold is saved in map state. Restart live sessions after configuration changes.
+`min_object_height_m` defaults to `0.10`. The map frame must have calibrated ground at Z=0 and Z pointing up. New cuboids whose highest map-frame corner is at or below this threshold are excluded. This tests height above ground, not box thickness or bottom height. Small low objects may also be rejected; thick floor predictions may remain. Original depth coverage is unchanged; old-box deletion uses the coverage-ratio threshold above. Update diagnostics include `ground_filtered_indices`; these also count as skipped predictions. The threshold is saved in map state.
 
 ## 0.9 覆盖比例验收（2026-11-03）
 

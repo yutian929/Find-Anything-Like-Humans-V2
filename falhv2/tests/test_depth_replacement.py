@@ -1,12 +1,9 @@
-import contextlib
-import io
 import itertools
 import json
 from dataclasses import replace
 from pathlib import Path
 import tempfile
 import unittest
-from unittest.mock import patch, MagicMock
 
 import numpy as np
 
@@ -178,32 +175,6 @@ class DepthReplacementTests(unittest.TestCase):
             p.write_text(json.dumps(old))
             with self.assertRaisesRegex(ValueError, "fresh map"):
                 DepthReplacementMap.load(p)
-
-    def test_cli_uses_the_same_mask_and_planner_compatible_scene(self):
-        from falhv2 import main
-        from falhv2.tools import build_map
-        from falhv2.anchor_planners.observation_model import validate_objects
-        with tempfile.TemporaryDirectory() as folder:
-            p = Path(folder)/"map.json"
-            cfg = Path(folder)/"robot.py"
-            cfg.write_text("ROBOT_SOURCE = {'map_id': 'room', 'map_revision': 'session-1'}\n")
-            robot = MagicMock()
-            robot.__enter__.return_value = robot
-            robot.grid_snapshot.return_value = grid()
-            f1, f2 = frame(), frame(2, depth=3.)
-            robot.capture.side_effect = [f1, f2]
-            client = MagicMock()
-            client.detect.side_effect = [prediction(f1, (FRONT, BEHIND)), prediction(f2, (FRONT, BEHIND))]
-            with patch.object(build_map, "AnchorMapRobot", return_value=robot), patch.object(
-                    build_map, "build_cubify_anything", return_value=client), contextlib.redirect_stdout(io.StringIO()):
-                self.assertEqual(main.main(["--config", str(cfg), "--task", "build-map",
-                                            "--frames", "2", "--output", str(p)]), 0)
-            client.close.assert_called_once()
-            robot.__exit__.assert_called_once()
-            data = json.loads(p.read_text())
-            self.assertEqual(len(validate_objects(data["objects"])), 2)
-            self.assertEqual(data["mapping"]["last_update"]["skipped_detection_indices"], [1])
-            self.assertTrue(p.with_suffix(".svg").exists())
 
     def test_parameters_are_validated(self):
         for options in (dict(pixel_stride=0), dict(pixel_stride=True),

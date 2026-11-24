@@ -2,24 +2,17 @@
 
 已接入 [Cubify Anything](https://github.com/apple-aiml-research/ml-cubifyanything) 的 **CuTR RGB-D** 模型。
 本地和 HTTP 客户端统一实现 `base.CuboidDetector`；`InstanceSegmenter` 保留为独立的 mask 接口。
-默认 `python falhv2/main.py` 启动持续采集与模型推理；离线锚点选择使用 `--task anchors`，该任务不加载模型。
+客户端通过 Python API 使用。离线锚点规划直接读取地图快照，无需加载模型。
 
 每个模型使用一个 Python 文件，与旧 `anchor-map/model_clients` 的组织方式一致：
 `cubify_anything.py` 包含 Local / Remote 客户端及该模型专用的协议、几何处理；
-`base.py` 定义统一接口，`__init__.py` 提供构造入口。HTTP 服务启动器仍在 `tools/cubify_server.py`。
+`base.py` 定义统一接口，`__init__.py` 提供构造入口。
 
 ## 配置
 
-默认使用 `falhv2/config/defaults.py` 中的一个 `CUBIFY` 字典，结构与旧项目的 RYNNBRAIN / SAM2 / SAM3 相同。
-本地模式读取 path、source_path、device、max_side、score_threshold；远程模式读取 url（含端口）、timeout、score_threshold。
-切换远程只需修改该字典中的 mode 和 url，本地字段可以保留；远程推理的权重、设备和输入尺寸以服务端机器的配置为准。
-只有 main.py 加载配置，再调用 `build_cubify_anything(model_config)`。客户端不 import 配置，也不自行选择配置文件。
-预览和服务启动器接收 main.py 传入的该字典；服务使用其中的本地参数，并默认使用 url 中的端口，始终本地加载模型。
-服务绑定地址仍由 --host 控制（默认 127.0.0.1），跨机访问可用 --host 0.0.0.0；--port 可临时覆盖监听端口。
-显示框数、点云采样等保留在工具内部，不另设配置块。默认 main.py 运行实时快、慢系统；离线选点使用 --task anchors。
-
-可通过 `python falhv2/main.py --config /path/to/robot.py --task cubify-preview` 选择另一份 Python 配置。
-配置文件可以只定义一个 CUBIFY 字典：未指定的字段沿用默认值，命令行参数再覆盖本次调用。
+调用方将参数字典传给 `build_cubify_anything`。
+本地客户端使用 `path`、`source_path`、`device`、`max_side`、`score_threshold` 和 `fp16`。
+远程客户端使用 `url`、`timeout` 和 `score_threshold`。
 
 ## 本地调用
 
@@ -30,7 +23,7 @@ from falhv2.model_clients import build_cubify_anything
 from falhv2.robot_adapters.anchor_map import from_anchor_map_frame
 from falhv2.map_maintainers.cubify import cuboids_to_map_aabbs
 
-client = build_cubify_anything(model_config)  # model_config 由 main.py 传入
+client = build_cubify_anything(model_config)  # model_config 由调用方传入
 try:
     # legacy_frame 是 anchor-map/frame_source.py 的 Frame。
     # map_id / map_revision 必须由 SLAM 会话提供，不可用常量掩盖回环修正。
@@ -58,17 +51,8 @@ python -m pip install -r falhv2/model_clients/requirements.txt
 
 ## 远程调用
 
-在模型所在机器的仓库根目录启动（默认仅监听本机）：
-```bash
-conda run -n depth python falhv2/main.py --task cubify-server \
-  --weights /home/hri/models_weights/cubifyanything/cutr_rgbd.pth \
-  --source-path /home/hri/map_test_new_v8_clean \
-  --device cuda --port 8093
-```
-跨机器部署时按实际网络设置 `--host`，或使用 SSH 转发；此启动器供受信任网络中的开发调试使用，
-没有实现公网认证。停止服务会释放客户端，不保留后台进程。
+远程客户端连接已部署的兼容服务：
 
-机器人侧仅更换配置，`detect(frame)` 与结果类型不变：
 ```python
 client = build_cubify_anything({
     "mode": "remote",
@@ -100,7 +84,7 @@ HTTP 超时不会取消服务端已开始的 GPU 推理；本地调用是同步�
 - `cuboids_to_map_aabbs` 先把所有角点变换到 map，再逐轴取 min/max；
   不能先取相机系 AABB 后只变换两个极值点。
 - AABBObservation 仅是单帧观测，没有跨帧稳定物体 ID。
-  已通过 main.py --task build-map 实现深度约束的旧框替换、栅格读取和规划地图导出；不做关联/融合，尚不支持回环重投影。
+  地图系 AABB 可交给 [地图维护库](../map_maintainers/README.md) 更新快照。
 - legacy Frame 的 stamp 是 UNIX 秒浮点数；转换回纳秒不能恢复其已丢失的精度。
 
 ## 验证
@@ -109,26 +93,8 @@ HTTP 超时不会取消服务端已开始的 GPU 推理；本地调用是同步�
 python -B -m unittest falhv2.tests.test_cubify_clients -v
 ```
 
-覆盖 RGB/深度转换、位姿与重力、地图 AABB、损坏/错帧响应、真实 localhost HTTP 传输和异常。
-HTTP 单测用可控假模型，不要求权重。Lenovo 的真实权重另已用合成 RGB-D 完成 GPU 推理及真实 HTTP 链路冒烟检查（641x479 非整倍数图像，本地/远程输出一致）；
-这不代表已验证真实相机上的检测精度。默认规划入口不使用这些模型配置。
-
-## 当前相机帧可视化
-
-在仓库根目录运行（Lenovo 的 depth 环境已有所需 cv2 / plotly）：
-```bash
-conda run -n depth python falhv2/main.py --task cubify-preview
-```
-工具先加载模型，再读取一帧实时同步 RGB-D，生成原图与 3D 框投影对照 PNG、
-可旋转的实测点云与预测框 HTML，以及预测 JSON 和原始 RGB-D NPZ。
-结果保存在 falhv2/outputs/cubify_时间戳.*；HTML 内嵌 Plotly，可离线打开。
-编号按置信度降序排列，默认阈值 0.25，最多显示 20 个框；JSON 保留全部过阈值预测。
-可用 --threshold、--max-boxes 调整；--server-url 可改用已部署的模型服务。
-该预览使用相机坐标，不进行地图融合或给物体分配跨帧 ID。
-
-需要同步 RGB-D 发布器和底盘网络均正常；底盘定位超时会让发布器停止发布有效帧，
-工具会明确报错，不使用旧帧、合成帧或猜测位姿生成效果图。
+测试覆盖 RGB/深度转换、位姿与重力、地图 AABB、损坏或错帧的协议消息和配置校验。
 
 ### Confidence and precision
 
-`CUBIFY["score_threshold"]` (default `0.25`) keeps scores greater than or equal to the threshold in both local and remote clients. `CUBIFY["fp16"]` (default `True`) enables CUDA FP16 autocast; set it to `False` for FP32. CPU always uses FP32. Outputs are converted to FP32 before NumPy conversion. The HTTP server uses its own FP16 setting, supplied through `main.py --task cubify-server`; the remote caller only controls the score threshold. Restart the process after changing configuration. Ground filtering is not enabled by these settings.
+`score_threshold` (default `0.25`) keeps scores greater than or equal to the threshold in both local and remote clients. `fp16` (default `True`) enables CUDA FP16 autocast; set it to `False` for FP32. CPU always uses FP32. Outputs are converted to FP32 before NumPy conversion. The remote inference service controls its own precision. Restart the process after changing configuration. Ground filtering is not enabled by these settings.

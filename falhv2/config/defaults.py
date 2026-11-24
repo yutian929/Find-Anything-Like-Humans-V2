@@ -6,7 +6,7 @@ DATA_DIR = ROOT / 'data'
 OUTPUT_DIR = ROOT / 'outputs'
 
 # 持久输入：三个文件集中放在 data/。
-MAP_PATH = DATA_DIR / 'map_aabb.json'
+MAP_PATH = DATA_DIR / 'map.json'
 ROBOT_PATH = DATA_DIR / 'robot.json'
 CAMERA_PATH = DATA_DIR / 'camera.d435i.json'
 
@@ -39,52 +39,3 @@ SELECTION_TIME_LIMIT_S = None      # 全部 MILP 调用共享的秒数预算；N
 AUDIT_SAMPLE_GRID = 96            # 最终复核边长，整数 [4,128]；实际不低于 refinement_grid
 MAX_AUDIT_RETRIES = 3             # 高密度复核失败后的重选次数；0 表示直接尝试基线兜底
 SAME_COST_REPAIR_TIME_LIMIT_S = 2.0 # 已有最优性证明时，先限时寻找同成本修复；0 关闭
-
-
-# Cubify Anything: one model, one configuration block.
-CUBIFY = {
-    "mode": "local",             # local | remote
-    "path": str(Path.home() / "models_weights/cubifyanything/cutr_rgbd.pth"),
-    "source_path": str(Path.home() / "map_test_new_v8_clean"),  # SDK root; None if installed
-    "device": "auto",
-    "max_side": 768,              # RGB longest side, 256..1024
-    "score_threshold": 0.25,       # Keep confidence >= threshold (local and remote)
-    "fp16": True,                 # CUDA mixed precision; CPU stays FP32; remote uses server config
-    "url": "http://127.0.0.1:8093",  # Remote model address, including port
-    "timeout": 60,                # Remote HTTP timeout in seconds
-}
-
-
-# Robot session identity must be supplied explicitly; the current API has no revision ID.
-ROBOT_SOURCE = {
-    "map_id": None,
-    "map_revision": None,
-    "endpoint": "ipc:///tmp/rgbd_pose.ipc",
-    "chassis_url": "http://192.168.11.1:1448",
-}
-
-# Replace old boxes visible in the current posed depth image; no tracking/fusion.
-MAP_UPDATE = {
-    "min_coverage_ratio": 0.9,  # covered XY area / full AABB XY area; insertion and deletion
-    "pixel_stride": 4,          # sampled depth rays; same XY mask for update and display
-    "min_depth_m": 0.15,
-    "max_depth_m": 8.0,
-    "min_object_height_m": 0.10,  # Reject boxes with map-Z top <= this; calibrated floor Z=0
-}
-
-
-LIVE_PAGE = ROOT / 'assets' / 'live_map.html'
-LIVE = {
-    "host": "127.0.0.1",
-    "port": 8090,
-    "timeout_s": 5.0,
-    "update_interval_s": 0.1,
-}
-
-# Replay transport only; camera calibration and robot geometry stay unchanged.
-REPLAY_SOURCE = {
-    "endpoint": "ipc:///tmp/jicheng_replay.ipc",
-    "map_endpoint": "ipc:///tmp/jicheng_map_replay.ipc",
-    "idle_timeout_s": 30.0,
-    "max_map_age_s": 3.0,
-}
