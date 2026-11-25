@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import logging
 import math
@@ -47,11 +48,15 @@ def load_config(path=None):
     return SimpleNamespace(**values)
 
 
-def read_input(path):
+def read_input_bytes(path):
     try:
-        return json.loads(Path(path).read_text(encoding='utf-8'))
+        return Path(path).read_bytes()
     except FileNotFoundError as exc:
         raise ValueError(f'Input file missing: {path}; check --config or explicit input paths') from exc
+
+
+def read_input(path):
+    return json.loads(read_input_bytes(path))
 
 
 def configured_camera(camera_config, config=None):
@@ -69,6 +74,14 @@ def planning_audit(config=None):
 
 def run_task(task, argv, config):
     """Pass only the parameters a tool needs; tools never load project config."""
+    if task == 'snapshots':
+        from falhv2.snapshots.cli import snapshots
+        return snapshots(argv, map_path=config.MAP_PATH, plan_path=config.ANCHOR_PLAN_PATH,
+                         store=config.SNAPSHOT_STORE)
+    if task == 'find-object':
+        from falhv2.snapshots.cli import search
+        return search(argv, store=config.SNAPSHOT_STORE, endpoint=config.VALEN_ENDPOINT,
+                      model=config.VALEN_MODEL, output=config.OUTPUT_DIR / 'searches')
     if task == 'safe-regions':
         from falhv2.anchor_planners.regions_extractor import main as run
         return run(argv, scene_path=config.MAP_PATH, robot_path=config.ROBOT_PATH,
@@ -165,7 +178,7 @@ def main(argv=None):
     common = argparse.ArgumentParser(add_help=False)
     common.add_argument('--config', type=Path, help='Python config file; defaults to config/defaults.py')
     common.add_argument('--task', default='anchors',
-                        choices=('anchors', 'safe-regions', 'map-editor', 'camera-parameters'),
+                        choices=('anchors', 'safe-regions', 'map-editor', 'camera-parameters', 'snapshots', 'find-object'),
                         help='选择独立任务（默认：anchors）')
     options, remaining = common.parse_known_args(argv)
     try:
@@ -197,7 +210,8 @@ def main(argv=None):
             raise ValueError('--output must have a .json suffix')
         if args.selection_time_limit_s is not None and (not math.isfinite(args.selection_time_limit_s) or args.selection_time_limit_s <= 0):
             raise ValueError('--selection-time-limit-s must be finite and positive')
-        scene = read_input(args.scene)
+        scene_bytes = read_input_bytes(args.scene)
+        scene = json.loads(scene_bytes)
         robot = read_input(args.robot)
         camera = read_input(args.camera)
         result, regions, stations, candidates = plan(scene, robot, camera, yaw_step_deg=args.yaw_step_deg,
@@ -206,6 +220,7 @@ def main(argv=None):
                                                        observation_workers=args.observation_workers,
                                                        observation_executor=args.observation_executor,
                                                        project_config=config)
+        result['map_sha256'] = hashlib.sha256(scene_bytes).hexdigest()
         LOGGER.info('5/5 导出安全区域、计划与离线可视化')
         export_plan(args.output, scene, camera, result, regions, stations, candidates,
                     include_supports=args.save_supports, template_path=config.ANCHOR_VIEWER_TEMPLATE)
