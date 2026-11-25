@@ -48,7 +48,7 @@ python -B falhv2/main.py --task find-object --query '蓝色马克杯'
 RealMan 的本地 CPU 服务和两份 GGUF 权重位于下面的目录。若重启机器或服务已停止，可在另一个终端以前台方式启动，运行查找时保持这个终端打开。
 
 ```bash
-cd /rm_nvme/recordings/user_home/models_weights/Valen-Decision-1.5-0.8B-GGUF
+cd /rm_nvme/recordings/user_home/Find-Anything-Like-Humans-V2/models/Valen-Decision-1.5-0.8B-GGUF
 ./serve-local.sh
 ```
 
