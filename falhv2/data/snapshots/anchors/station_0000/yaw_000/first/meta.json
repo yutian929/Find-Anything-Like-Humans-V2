@@ -1,0 +1,72 @@
+{
+  "frame_id": "demo-mug",
+  "timestamp_ns": 1000000000,
+  "clock_domain": "simulation",
+  "map_id": "demo-room",
+  "map_revision": "509b0eed7a8ffe44bc7be9cb7f8654030be5d3516ad4b7a141ffc6b8bf0bcc43",
+  "camera_frame": "optical",
+  "visit_id": "demo-visit",
+  "simulated": true,
+  "station_index": 0,
+  "yaw_index": 0,
+  "intrinsics": {
+    "width": 384,
+    "height": 384,
+    "fx": 384,
+    "fy": 384,
+    "cx": 191.5,
+    "cy": 191.5
+  },
+  "T_map_camera": [
+    [
+      0.0,
+      0.0,
+      1.0,
+      1.0
+    ],
+    [
+      -1.0,
+      0.0,
+      0.0,
+      1.0
+    ],
+    [
+      0.0,
+      -1.0,
+      0.0,
+      0.5
+    ],
+    [
+      0.0,
+      0.0,
+      0.0,
+      1.0
+    ]
+  ],
+  "T_map_base": [
+    [
+      1.0,
+      0.0,
+      0.0,
+      1.0
+    ],
+    [
+      0.0,
+      1.0,
+      0.0,
+      1.0
+    ],
+    [
+      0.0,
+      0.0,
+      1.0,
+      0.0
+    ],
+    [
+      0.0,
+      0.0,
+      0.0,
+      1.0
+    ]
+  ]
+}

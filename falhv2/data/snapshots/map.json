@@ -1,0 +1,26 @@
+{
+  "name": "demo-room",
+  "grid": {
+    "rows": [
+      "....",
+      "....",
+      "....",
+      "...."
+    ],
+    "resolution": 1,
+    "origin": [
+      0,
+      0
+    ]
+  },
+  "objects": [
+    {
+      "id": "demo-object",
+      "position": [
+        2,
+        1,
+        0.5
+      ]
+    }
+  ]
+}

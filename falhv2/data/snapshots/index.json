@@ -1,0 +1,21 @@
+{
+  "schema_version": 1,
+  "map_sha256": "509b0eed7a8ffe44bc7be9cb7f8654030be5d3516ad4b7a141ffc6b8bf0bcc43",
+  "plan_sha256": "0992a5622e2beb2e3ba7a9c11406f129bf5ff059cd080f73d5e00c125c63843c",
+  "map_id": "demo-room",
+  "map_revision": "509b0eed7a8ffe44bc7be9cb7f8654030be5d3516ad4b7a141ffc6b8bf0bcc43",
+  "views": [
+    {
+      "station_index": 0,
+      "yaw_index": 0,
+      "position": [
+        1,
+        1
+      ],
+      "yaw_rad": 0,
+      "expected_object_ids": [
+        "demo-object"
+      ]
+    }
+  ]
+}

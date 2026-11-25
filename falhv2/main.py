@@ -9,7 +9,7 @@ if __package__ in (None, ""):
 
 from falhv2.config import load_config
 
-TASKS = ("anchors-plan", "safe-regions", "map-editor", "camera-parameters", "snapshots-updater", "find-object")
+TASKS = ("anchors-plan", "safe-regions", "map-editor", "camera-parameters", "find-object")
 
 
 def plan(scene, robot_config, camera_config, **options):
@@ -25,10 +25,6 @@ def run_task(task, argv, config):
     if task == 'anchors-plan':
         from falhv2.anchor_planners.cli import main as run
         return run(argv, config)
-    if task == 'snapshots-updater':
-        from falhv2.snapshots_updater.cli import snapshots
-        return snapshots(argv, map_path=config.MAP_PATH, plan_path=config.ANCHOR_PLAN_PATH,
-                         store=config.SNAPSHOT_STORE)
     if task == 'find-object':
         from falhv2.object_search.cli import search
         return search(argv, store=config.SNAPSHOT_STORE, endpoint=config.VALEN_ENDPOINT,

@@ -1,16 +1,6 @@
-# 离线快照与 Valen 找物
+# 快照库与 Valen 找物
 
-在仓库根目录、`falhv2` 环境中运行。快系统或离线回放提供一次到访的观测，`main.py` 处理快照和查找。采集和查找都可以在只完成部分计划时运行。
-
-## 采集
-
-```bash
-python -B falhv2/main.py --task snapshots-updater init
-python -B falhv2/main.py --task snapshots-updater record --station 5 --yaw 3 --frame /path/to/arrival
-python -B falhv2/main.py --task snapshots-updater status
-```
-
-`init` 默认冻结配置中的地图和锚点计划，也可指定 `--map`、`--plan`、`--store`。新版规划文件包含输入地图的 SHA-256，旧计划按场景名和目标 ID 集合检查兼容性。新计划使用新的库目录。索引中的 `expected_object_ids` 表示规划预期。
+默认库位于 `falhv2/data/snapshots/`。示例只有一个站点、一个朝向和一张蓝色马克杯照片。深度、标定和位姿均为模拟值。[图片来源](https://valen-team.github.io/cookbook/code/media/mug-counter.jpg)。
 
 ```text
 snapshots/
@@ -25,7 +15,7 @@ snapshots/
 
 `station_index` 和 `yaw_index` 取自规划文件。同一锚点的不同朝向各自保存。一次到访产生一个稳定的 `visit_id`，同一次停留的所有帧和重试复用这个 ID。首次到访只写 `first`，后续到访原子替换 `last`。每个视角最多两份。保存时检查底盘与计划的 XY 距离（≤0.10 m）及偏航误差（≤10°）。同一视角要求采集时钟一致，迟到的旧帧会被跳过。
 
-`record --frame` 的输入目录包含三份文件，可直接参考示例库里的一个 `first/`。机器人适配器也可把同步好的 `RGBDFrame` 和到访 ID 传给 `store.record()`。
+每份快照包含三份文件，可参考示例库里的 `first/`。机器人适配器也可把同步好的 `RGBDFrame` 和到访 ID 传给 `store.record()`。
 
 | 文件 | 内容 |
 |---|---|
@@ -53,21 +43,3 @@ cd /rm_nvme/recordings/user_home/Find-Anything-Like-Humans-V2/models/Valen-Decis
 ```
 
 每次运行在 `falhv2/outputs/searches/<唯一编号>/` 保存 `result.json`。也可用 `--output` 指定新目录。结果区分 `found_latest`、`found_historical`、`not_found_in_snapshots` 和 `no_snapshots`，另列未访问视角、各张图的分数和确认结果。命中时附原图和标框图、拍摄位姿和时间。框中央区域的深度有效且一致时，按相机内参和实测位姿给出地图系近似表面点，其他情况记录 null。
-
-## 复现部分巡检
-
-```bash
-img=falhv2/outputs/demo-images
-mkdir -p "$img"
-curl -fL https://valen-team.github.io/cookbook/code/media/mug-counter.jpg -o "$img/mug.jpg"
-curl -fL https://raw.githubusercontent.com/opencv/opencv/4.x/samples/data/fruits.jpg -o "$img/fruits.jpg"
-curl -fL https://raw.githubusercontent.com/opencv/opencv/4.x/samples/data/basketball1.png -o "$img/court.png"
-store=falhv2/outputs/snapshot-search-demo
-python -B falhv2/main.py --task snapshots-updater demo --store "$store" \
-  --mug "$img/mug.jpg" --fruit "$img/fruits.jpg" --court "$img/court.png"
-python -B falhv2/main.py --task find-object --store "$store" --query 'a blue mug'
-```
-
-`demo` 要求一个新目录。RealMan 已生成的样例可以从最后一条查找命令直接开始。模拟先拍水果，停留时重复提交，到另一站拍篮球场，最后两次重访第一站，依次拍篮球场和蓝杯。事件及原图 SHA-256 在 `demo_events.json`。图片是公开样例，深度、相机内参、拍摄时间及底盘/相机位姿是模拟值。
-
-模型支持的四类问答、图像格式和本地服务构建说明见[官方 Decisions API](https://valen-team.github.io/docs/valen/api/decisions/) 和[官方 GGUF 服务文档](https://valen-team.github.io/docs/valen/gguf/)。

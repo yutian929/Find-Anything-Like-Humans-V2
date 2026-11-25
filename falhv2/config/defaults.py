@@ -9,6 +9,7 @@ OUTPUT_DIR = ROOT / 'outputs'
 MAP_PATH = DATA_DIR / 'map.json'
 ROBOT_PATH = DATA_DIR / 'robot.json'
 CAMERA_PATH = DATA_DIR / 'camera.d435i.json'
+SNAPSHOT_STORE = DATA_DIR / 'snapshots'
 
 # 可重新生成的结果与相机读取草稿。
 SAFE_REGIONS_PATH = OUTPUT_DIR / 'safe_regions.json'
@@ -40,6 +41,5 @@ AUDIT_SAMPLE_GRID = 96            # 最终复核边长，整数 [4,128]；实际
 MAX_AUDIT_RETRIES = 3             # 高密度复核失败后的重选次数；0 表示直接尝试基线兜底
 SAME_COST_REPAIR_TIME_LIMIT_S = 2.0 # 已有最优性证明时，先限时寻找同成本修复；0 关闭
 
-SNAPSHOT_STORE = OUTPUT_DIR / 'snapshots'
 VALEN_ENDPOINT = 'http://127.0.0.1:18765/v1/decisions'
 VALEN_MODEL = 'valen-0.8b'
