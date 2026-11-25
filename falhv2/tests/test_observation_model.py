@@ -178,7 +178,7 @@ class BoxObservationTests(unittest.TestCase):
                 (folder/f'{name}.json').write_text(json.dumps(value))
             before = (folder/'map.json').read_bytes()
             output = folder/'plan.json'
-            run = subprocess.run([sys.executable, '-B', str(root/'main.py'), '--task', 'anchors', '--scene', str(folder/'map.json'),
+            run = subprocess.run([sys.executable, '-B', str(root/'main.py'), '--task', 'anchors-plan', '--scene', str(folder/'map.json'),
                 '--robot', str(folder/'robot.json'), '--camera', str(folder/'camera.json'), '--output', str(output),
                 '--save-supports'], text=True, capture_output=True)
             self.assertEqual(run.returncode, 0, run.stderr)

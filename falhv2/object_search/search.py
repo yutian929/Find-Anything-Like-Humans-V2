@@ -6,7 +6,7 @@ from pathlib import Path
 import cv2
 import numpy as np
 
-from .store import read_json, search_views, sha, write_json
+from falhv2.snapshots_updater.store import read_json, search_views, sha, write_json
 
 
 def estimate_point(path, box, meta):

@@ -5,9 +5,9 @@
 ## 采集
 
 ```bash
-python -B falhv2/main.py --task snapshots init
-python -B falhv2/main.py --task snapshots record --station 5 --yaw 3 --frame /path/to/arrival
-python -B falhv2/main.py --task snapshots status
+python -B falhv2/main.py --task snapshots-updater init
+python -B falhv2/main.py --task snapshots-updater record --station 5 --yaw 3 --frame /path/to/arrival
+python -B falhv2/main.py --task snapshots-updater status
 ```
 
 `init` 默认冻结配置中的地图和锚点计划，也可指定 `--map`、`--plan`、`--store`。新版规划文件包含输入地图的 SHA-256，旧计划按场景名和目标 ID 集合检查兼容性。新计划使用新的库目录。索引中的 `expected_object_ids` 表示规划预期。
@@ -63,7 +63,7 @@ curl -fL https://valen-team.github.io/cookbook/code/media/mug-counter.jpg -o "$i
 curl -fL https://raw.githubusercontent.com/opencv/opencv/4.x/samples/data/fruits.jpg -o "$img/fruits.jpg"
 curl -fL https://raw.githubusercontent.com/opencv/opencv/4.x/samples/data/basketball1.png -o "$img/court.png"
 store=falhv2/outputs/snapshot-search-demo
-python -B falhv2/main.py --task snapshots demo --store "$store" \
+python -B falhv2/main.py --task snapshots-updater demo --store "$store" \
   --mug "$img/mug.jpg" --fruit "$img/fruits.jpg" --court "$img/court.png"
 python -B falhv2/main.py --task find-object --store "$store" --query 'a blue mug'
 ```

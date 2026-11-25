@@ -21,7 +21,6 @@
 ```python
 from falhv2.model_clients import build_cubify_anything
 from falhv2.robot_adapters.anchor_map import from_anchor_map_frame
-from falhv2.map_maintainers.cubify import cuboids_to_map_aabbs
 
 client = build_cubify_anything(model_config)  # model_config 由调用方传入
 try:
@@ -30,7 +29,6 @@ try:
     frame = from_anchor_map_frame(
         legacy_frame, map_id=current_map_id, map_revision=current_map_revision)
     result = client.detect(frame)
-    observations = cuboids_to_map_aabbs(frame, result)
 finally:
     client.close()
 ```
@@ -81,10 +79,6 @@ HTTP 超时不会取消服务端已开始的 GPU 推理；本地调用是同步�
   内参按真实横纵缩放比例更新。归一化交给上游 Preprocessor。
 - 输出是**无类别有向 3D cuboid** 的八个角点，单位米、原相机光学坐标系，
   尚不是地图 AABB。不得对上游已应用重力旋转的输出再旋转一次。
-- `cuboids_to_map_aabbs` 先把所有角点变换到 map，再逐轴取 min/max；
-  不能先取相机系 AABB 后只变换两个极值点。
-- AABBObservation 仅是单帧观测，没有跨帧稳定物体 ID。
-  地图系 AABB 可交给 [地图维护库](../map_maintainers/README.md) 更新快照。
 - legacy Frame 的 stamp 是 UNIX 秒浮点数；转换回纳秒不能恢复其已丢失的精度。
 
 ## 验证

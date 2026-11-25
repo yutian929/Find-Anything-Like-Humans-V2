@@ -12,7 +12,6 @@ from falhv2.model_clients.cubify_anything import (
     gravity_rotation, make_result, threshold, validate_frame)
 from falhv2.model_clients.cubify_anything import (
     decode_frame, decode_result, encode_frame, encode_result)
-from falhv2.map_maintainers.cubify import cuboids_to_map_aabbs
 from falhv2.robot_adapters.anchor_map import from_anchor_map_frame
 
 
@@ -94,24 +93,6 @@ class CubifyGeometryTests(unittest.TestCase):
         for score in [-1, 2, float("nan"), True]:
             with self.assertRaises(ValueError):
                 threshold(score)
-
-    def test_map_aabb_transforms_all_corners(self):
-        frame = sample_frame()
-        a = np.pi/4
-        yaw = np.array([[np.cos(a),-np.sin(a),0],
-                        [np.sin(a),np.cos(a),0],[0,0,1.]])
-        T = frame.T_map_camera.copy()
-        T[:3,:3] = yaw @ T[:3,:3]
-        frame = replace(frame,T_map_camera=T)
-        result = make_result(frame,[.8],[sample_corners()],"test",.25)
-        box, = cuboids_to_map_aabbs(frame, result)
-        extent = 3/np.sqrt(2)
-        center = np.array([10+3/np.sqrt(2),20+3/np.sqrt(2),1])
-        np.testing.assert_allclose(box.lower,center-[extent,extent,.5])
-        np.testing.assert_allclose(box.upper,center+[extent,extent,.5])
-        self.assertEqual(box.map_revision, "rev-2")
-        with self.assertRaises(ValueError):
-            cuboids_to_map_aabbs(replace(frame,frame_id="other"), result)
 
     def test_wire_lossless_rgb_metric_depth_and_metadata(self):
         frame = sample_frame()

@@ -8,6 +8,7 @@ import math
 import os
 import shutil
 import tempfile
+from collections import Counter
 from contextlib import contextmanager
 from dataclasses import asdict
 from pathlib import Path
@@ -181,3 +182,21 @@ def search_views(root):
                     group = history if slot == 'first' and (parent / 'last').exists() else current
                     group.append((v, slot, pinned))
         yield index, current, history
+
+
+def status(root):
+    index = read_json(root / 'index.json')
+    summary = {'planned_views': len(index['views']), 'captured_views': 0, 'revisited_views': 0}
+    planned, visited = Counter(), Counter()
+    with lock(root, False):
+        for v in index['views']:
+            station = v['station_index']
+            planned[station] += 1
+            parent = root / view_path(station, v['yaw_index'])
+            if (parent / 'first').is_dir():
+                visited[station] += 1
+                summary['captured_views'] += 1
+            summary['revisited_views'] += (parent / 'last').is_dir()
+    summary.update(planned_stations=len(planned), visited_stations=len(visited),
+                   complete_stations=sum(visited[s] == n for s, n in planned.items()))
+    return summary

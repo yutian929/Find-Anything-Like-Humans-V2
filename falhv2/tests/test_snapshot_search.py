@@ -8,8 +8,8 @@ import numpy as np
 
 from falhv2.model_clients.valen import Valen
 from falhv2.robot_adapters.base import CameraIntrinsics, RGBDFrame
-from falhv2.snapshots.search import find_object
-from falhv2.snapshots.store import initialize, read_json, record, search_views, view_path, write_json
+from falhv2.object_search.search import find_object
+from falhv2.snapshots_updater.store import initialize, read_json, record, search_views, view_path, write_json
 
 
 class SnapshotTests(unittest.TestCase):
@@ -43,7 +43,7 @@ class SnapshotTests(unittest.TestCase):
             self.assertEqual(read_json(latest[0][2] / 'meta.json')['timestamp_ns'], 3)
             self.assertEqual(read_json(history[0][2] / 'meta.json')['timestamp_ns'], 1)
         self.assertEqual(self.capture(2), 'stale_frame')
-        with patch('falhv2.snapshots.store.cv2.imwrite', return_value=False), self.assertRaises(OSError):
+        with patch('falhv2.snapshots_updater.store.cv2.imwrite', return_value=False), self.assertRaises(OSError):
             self.capture(5)
         self.assertEqual(read_json(self.view / 'last/meta.json')['frame_id'], 'f-4')
         self.assertEqual(len(list(self.view.glob('.capture-*'))), 1)

@@ -11,6 +11,8 @@ from unittest.mock import patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 from falhv2 import main as entrypoint
+from falhv2.anchor_planners.cli import read_input
+from falhv2.anchor_planners.planning import configured_camera, planning_audit
 from falhv2.anchor_planners import anchor_verification as verification
 from falhv2.anchor_planners.anchor_candidates import yaw_grid
 from falhv2.anchor_planners.observation_model import PointCamera
@@ -28,15 +30,15 @@ class ConfigTests(unittest.TestCase):
         target = box('a', [3, -.5, .5], [4, .5, 1.5])
         with patch.dict(settings.OBSERVATION_DEFAULTS,
                         radial_inner_weight=.6, radial_outer_weight=.6, min_observation_score=.55):
-            row = BoxObserver(PointCamera(entrypoint.configured_camera(cfg)), [target]).evaluate(0, [[0, 0]], [0])[0]
+            row = BoxObserver(PointCamera(configured_camera(cfg, settings)), [target]).evaluate(0, [[0, 0]], [0])[0]
             self.assertAlmostEqual(row['observation_score'], .6)
             self.assertTrue(row['qualified'])
             with patch.dict(settings.OBSERVATION_DEFAULTS, min_observation_score=.65):
-                row = BoxObserver(PointCamera(entrypoint.configured_camera(cfg)), [target]).evaluate(0, [[0, 0]], [0])[0]
+                row = BoxObserver(PointCamera(configured_camera(cfg, settings)), [target]).evaluate(0, [[0, 0]], [0])[0]
                 self.assertFalse(row['qualified'])
                 self.assertEqual(row['reason'], 'observation_score')
                 cfg['observation_quality'].update(radial_inner_weight=.9, radial_outer_weight=.9)
-                row = BoxObserver(PointCamera(entrypoint.configured_camera(cfg)), [target]).evaluate(0, [[0, 0]], [0])[0]
+                row = BoxObserver(PointCamera(configured_camera(cfg, settings)), [target]).evaluate(0, [[0, 0]], [0])[0]
                 self.assertAlmostEqual(row['observation_score'], .9)
                 self.assertTrue(row['qualified'])  # Explicit JSON endpoints override config.py.
 
@@ -49,28 +51,28 @@ class ConfigTests(unittest.TestCase):
     def test_config_sampling_and_json_precedence(self):
         with patch.dict(settings.OBSERVATION_DEFAULTS, sample_grid=8, refinement_grid=16,
                         min_in_frame_fraction=.9, min_visible_pixels=500):
-            implicit = ObservationSettings.from_config(entrypoint.configured_camera(camera_config()))
+            implicit = ObservationSettings.from_config(configured_camera(camera_config(), settings))
             self.assertEqual((implicit.sample_grid, implicit.refinement_grid), (8, 16))
             self.assertEqual((implicit.min_in_frame_fraction, implicit.min_visible_pixels), (.9, 500))
-            explicit = ObservationSettings.from_config(entrypoint.configured_camera(box_camera_config()))
+            explicit = ObservationSettings.from_config(configured_camera(box_camera_config(), settings))
             self.assertEqual((explicit.sample_grid, explicit.refinement_grid, explicit.min_visible_pixels), (24, 48, 10))
             observer = BoxObserver(PointCamera(box_camera_config()), [])
             with patch.object(settings, 'AUDIT_SAMPLE_GRID', 16):
-                self.assertEqual(verification.dense_observer(observer, [], sample_grid=entrypoint.planning_audit()["sample_grid"]).settings.sample_grid, 48)
+                self.assertEqual(verification.dense_observer(observer, [], sample_grid=planning_audit(settings)["sample_grid"]).settings.sample_grid, 48)
             with patch.object(settings, 'AUDIT_SAMPLE_GRID', 64):
-                self.assertEqual(verification.dense_observer(observer, [], sample_grid=entrypoint.planning_audit()["sample_grid"]).settings.sample_grid, 64)
+                self.assertEqual(verification.dense_observer(observer, [], sample_grid=planning_audit(settings)["sample_grid"]).settings.sample_grid, 64)
 
     def test_invalid_experiment_parameters_are_rejected(self):
         for key, value in [('radial_outer_weight', 1.1), ('radial_inner_weight', .4),
                            ('min_observation_score', 0), ('sample_grid', True), ('refinement_grid', 8)]:
             with self.subTest(key=key), patch.dict(settings.OBSERVATION_DEFAULTS, {key: value}):
                 with self.assertRaises(ValueError):
-                    ObservationSettings.from_config(entrypoint.configured_camera(camera_config()))
+                    ObservationSettings.from_config(configured_camera(camera_config(), settings))
         for key, value in [('AUDIT_SAMPLE_GRID', 129), ('MAX_AUDIT_RETRIES', -1), ('MAX_AUDIT_RETRIES', True),
                            ('SAME_COST_REPAIR_TIME_LIMIT_S', -1), ('SAME_COST_REPAIR_TIME_LIMIT_S', float('nan'))]:
             with self.subTest(key=key), patch.object(settings, key, value):
                 with self.assertRaises(ValueError):
-                    entrypoint.planning_audit()
+                    planning_audit(settings)
         with patch.object(settings, 'YAW_STEP_DEG', 0):
             with self.assertRaises(ValueError):
                 yaw_grid(settings.YAW_STEP_DEG)
@@ -81,9 +83,9 @@ class ConfigTests(unittest.TestCase):
             with patch.multiple(settings, **values, YAW_STEP_DEG=90,
                                 SELECTION_TIME_LIMIT_S=5, AUDIT_SAMPLE_GRID=64, MAX_AUDIT_RETRIES=0):
                 for args, step, budget in [([], 90, 5), (['--yaw-step-deg', '45', '--selection-time-limit-s', '10'], 45, 10)]:
-                    with patch.object(sys, 'argv', ['main.py', '--task', 'anchors', *args]), contextlib.redirect_stdout(io.StringIO()):
+                    with patch.object(sys, 'argv', ['main.py', '--task', 'anchors-plan', *args]), contextlib.redirect_stdout(io.StringIO()):
                         self.assertEqual(entrypoint.main(), 0)
-                    result = entrypoint.read_input(values['ANCHOR_PLAN_PATH'])
+                    result = read_input(values['ANCHOR_PLAN_PATH'])
                     self.assertEqual(result['configuration']['yaw_step_deg'], step)
                     self.assertEqual(result['statistics']['yaw_count'], 360//step)
                     self.assertEqual(result['configuration']['selection_time_limit_s'], budget)
@@ -118,9 +120,9 @@ class ConfigTests(unittest.TestCase):
                     with patch.object(sys, 'argv', ['regions_extractor.py']), contextlib.redirect_stdout(io.StringIO()):
                         self.assertEqual(entrypoint.main(["--task", "safe-regions"]), 0)
                     (outputs/'map.json').write_text('invalid old output')
-                    with patch.object(sys, 'argv', ['main.py', '--task', 'anchors']), contextlib.redirect_stdout(io.StringIO()):
+                    with patch.object(sys, 'argv', ['main.py', '--task', 'anchors-plan']), contextlib.redirect_stdout(io.StringIO()):
                         self.assertEqual(entrypoint.main(), 0)
-                    result = entrypoint.read_input(outputs/'anchor_plan.json')
+                    result = read_input(outputs/'anchor_plan.json')
                     self.assertEqual(result['scene_name'], 'persistent input')
                     self.assertEqual(result['covered_object_ids'], ['target'])
                     self.assertTrue((outputs/'anchor_plan.html').is_file())
@@ -134,13 +136,13 @@ class ConfigTests(unittest.TestCase):
             actual_map = values['MAP_PATH']
             values['MAP_PATH'] = root/'missing.json'
             with patch.multiple(settings, **values):
-                with patch.object(sys, 'argv', ['main.py', '--task', 'anchors']), contextlib.redirect_stderr(io.StringIO()) as error:
+                with patch.object(sys, 'argv', ['main.py', '--task', 'anchors-plan']), contextlib.redirect_stderr(io.StringIO()) as error:
                     with self.assertRaises(SystemExit) as failure:
                         entrypoint.main()
                     self.assertEqual(failure.exception.code, 2)
                     self.assertIn('--config', error.getvalue())
                 self.assertFalse(values['OUTPUT_DIR'].exists())
-                with patch.object(sys, 'argv', ['main.py', '--task', 'anchors', '--scene', str(actual_map)]), contextlib.redirect_stdout(io.StringIO()):
+                with patch.object(sys, 'argv', ['main.py', '--task', 'anchors-plan', '--scene', str(actual_map)]), contextlib.redirect_stdout(io.StringIO()):
                     self.assertEqual(entrypoint.main(), 0)
 
 
@@ -198,8 +200,8 @@ class ConfigBoundaryTests(unittest.TestCase):
             path.write_text("\n".join(f"{key} = {str(value)!r}" for key,value in values.items())
                             +"\nYAW_STEP_DEG = 90\nAUDIT_SAMPLE_GRID = 64\nMAX_AUDIT_RETRIES = 0\n")
             with contextlib.redirect_stdout(io.StringIO()):
-                self.assertEqual(entrypoint.main(["--task","anchors","--config",str(path)]),0)
-            result=entrypoint.read_input(values["ANCHOR_PLAN_PATH"])
+                self.assertEqual(entrypoint.main(["--task","anchors-plan","--config",str(path)]),0)
+            result=read_input(values["ANCHOR_PLAN_PATH"])
             self.assertEqual(result["configuration"]["yaw_step_deg"],90)
             self.assertEqual(result["configuration"]["audit"]["sample_grid"],64)
             self.assertEqual(result["configuration"]["audit"]["max_retries"],0)
